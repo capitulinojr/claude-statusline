@@ -1,0 +1,5 @@
+# Without this, the Windows runner checks out with core.autocrlf=true, the .py
+# arrives with CRLF, and any byte comparison against a "...\n" literal fails on
+# Windows only.
+* text=auto eol=lf
+*.py text eol=lf

@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Transient files the status line itself writes, in case anyone runs it from
+# inside a clone of this repo.
+statusline-week-share.json
+statusline-payload.json

@@ -1,0 +1,113 @@
+name: portability
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: ${{ matrix.os }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One broken version must not hide the others.
+      fail-fast: false
+      matrix:
+        # The three OS families at both ends of the promised range.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        python: ["3.8", "3.14"]
+        # The middle only on Linux: what breaks per version (syntax, stdlib
+        # defaults) breaks the same on all three systems, and what breaks per
+        # system breaks on every version. The full cartesian product would pay
+        # three times for one piece of information.
+        include:
+          - { os: ubuntu-24.04, python: "3.9" }
+          - { os: ubuntu-24.04, python: "3.10" }
+          - { os: ubuntu-24.04, python: "3.11" }
+          - { os: ubuntu-24.04, python: "3.12" }
+          - { os: ubuntu-24.04, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v5
+
+      # uv, not actions/setup-python, for two measured reasons: setup-python
+      # hands you Python 3.8.10 (May 2021) on Windows and macOS, and
+      # ubuntu-26.04 has no 3.8 or 3.9 build at all - so the matrix would break
+      # by itself the day ubuntu-latest moves. uv ships current patch releases
+      # of 3.8 for all three runners, and it's the same binary used locally.
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: install CPython ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      # Catches new syntax before anything runs. The file uses `float | None` in
+      # annotations and only survives on 3.8 thanks to `from __future__ import
+      # annotations` - drop that line and the import is what explodes, so the
+      # selftest below is what actually proves it runs.
+      - name: py_compile on the target version
+        run: uv run --python ${{ matrix.python }} python -m py_compile statusline.py
+
+      # The project's test. `-S -E` mirrors exactly how the README says to
+      # install it: no site-packages, no PYTHON* variables.
+      - name: selftest
+        run: uv run --python ${{ matrix.python }} python -S -E statusline.py --selftest
+
+      # stdin JSON -> stdout ANSI, as a subprocess with no console attached,
+      # under hostile encodings. Compares bytes, never the screen.
+      - name: round-trip
+        run: uv run --python ${{ matrix.python }} python ci/roundtrip.py statusline.py
+
+  timezones:
+    name: DST ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        # POSIX strings, never IANA names: on Windows the MSVC CRT silently
+        # misparses a name like "America/New_York" into a junk offset, so a test
+        # written that way checks nothing there while looking green.
+        tz:
+          - "UTC0"                             # no DST, control
+          - "EST5EDT,M3.2.0,M11.1.0"           # DST at 02:00 - a 23h day and a 25h day
+          - "BRT3BRST,M10.3.0/0,M2.3.0/0"      # DST at MIDNIGHT - local midnight does not exist
+          - "LHW-10:30LHS-11,M10.1.0,M4.1.0"   # 30-minute offset and 30-minute DST
+          - "IST-5:30"                         # non-integer offset, no DST
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - run: uv python install 3.8
+      - run: uv run --python 3.8 python -S -E statusline.py --selftest
+
+  permissions-posix:
+    name: 0600 mode (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - run: uv python install 3.8
+      # umask 000 on purpose: with the runner's default 022, even a sloppy
+      # O_CREAT ends up looking right, and the check would pass for free.
+      - name: selftest under a permissive umask
+        run: |
+          umask 000
+          uv run --python 3.8 python -S -E statusline.py --selftest
