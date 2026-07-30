@@ -42,7 +42,10 @@ jobs:
       # ubuntu-26.04 has no 3.8 or 3.9 build at all - so the matrix would break
       # by itself the day ubuntu-latest moves. uv ships current patch releases
       # of 3.8 for all three runners, and it's the same binary used locally.
-      - uses: astral-sh/setup-uv@v9
+      # Exact version, not a moving major: setup-uv publishes v9.0.0 as a
+      # release but its moving major tags stop at v7, so `@v9` does not resolve
+      # and every job dies in "Set up job" before running anything.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -86,7 +89,10 @@ jobs:
       TZ: ${{ matrix.tz }}
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v9
+      # Exact version, not a moving major: setup-uv publishes v9.0.0 as a
+      # release but its moving major tags stop at v7, so `@v9` does not resolve
+      # and every job dies in "Set up job" before running anything.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv python install 3.8
@@ -101,7 +107,10 @@ jobs:
         os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v9
+      # Exact version, not a moving major: setup-uv publishes v9.0.0 as a
+      # release but its moving major tags stop at v7, so `@v9` does not resolve
+      # and every job dies in "Set up job" before running anything.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv python install 3.8
