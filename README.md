@@ -1,12 +1,14 @@
 # statusline.py - a two-line status line for Claude Code
 
+[![portability](https://github.com/capitulinojr/claude-statusline/actions/workflows/portability.yml/badge.svg)](https://github.com/capitulinojr/claude-statusline/actions/workflows/portability.yml)
+
 Leia em [português](README.pt-BR.md).
 
 ![The status line: top line with model, effort, session name, context and tokens; bottom line with the 5-hour, daily and weekly quotas](docs/statusline.png)
 
 ```
 <model> <effort> | <session(italic)> · <ctx%> <session-tokens>
-<5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset>
+------- <5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset> -------
 ```
 
 The top line is this session. The bottom line is your account quota. There is a
@@ -55,7 +57,7 @@ whatever was already in it.
 }
 ```
 
-On macOS/Linux use `python3 -S -E \"/path/statusline.py\"` instead. The `-S -E`
+On macOS/Linux use `python3 -S -E "/path/statusline.py"` instead. The `-S -E`
 flags skip `site-packages` and the `PYTHON*` environment variables: it starts
 faster, and a dirty `PYTHONPATH` can't break it.
 
@@ -73,9 +75,9 @@ faster, and a dirty `PYTHONPATH` can't break it.
 | Field | What |
 | --- | --- |
 | `Opus 5 (1M context)` | the model, colored by tier: Fable orange and **bold**, Opus cyan, Sonnet yellow, Haiku blue |
-| `medium` | reasoning effort (`low` up to `max`) |
+| `medium` | reasoning effort (`low` up to `ultracode`) |
 | `Tuning the status line` | the session name, in italics: whatever you set with `/rename`, or the title Claude Code generated. The script strips control characters and truncates the text before it reaches your terminal |
-| `11.0%` | the share of the whole window already occupied, the `context`. Past 75% it turns red and a `/compact` hint shows up beside it |
+| `11.0%` | the share of the whole window already occupied, the `context`. From 75% up it turns red and a `/compact` hint shows up beside it |
 | `2.9M` | tokens this session accumulated (input + output + cache) |
 
 **Line 2: the quotas**
@@ -119,16 +121,24 @@ projection = consumption ÷ share of the deadline already elapsed   (100 = lands
 ```
 
 The thermometer (`SCALE_PACE`) runs gray, blue, green, yellow, orange, all
-muted, and vivid red once the projection passes 135. That is the pace blowing
-through the cap with room to spare. Nothing else shouts.
+muted, and vivid red from a projection of 135 up. That is the pace blowing
+through the cap with room to spare.
 
-Two deliberate exceptions:
+Three deliberate exceptions:
 
 - `context` has no deadline, since it doesn't reset on its own. It stays on the
-  value thermometer: red from 75% up, with the `/compact` hint beside it.
+  value thermometer (`SCALE_CTX`): red from 75% up, with the `/compact` hint
+  beside it.
 - A real quota at or above `PACE_HARD` (95%) goes back to red regardless of
   pace. At that point the block arrives before the reset, and that is actionable
   even on the eve of it.
+- **The two Fable fields have a scale of their own** (`SCALE_FABLE`) and never
+  go gray, blue or green: muted orange throughout, vivid orange from a
+  projection of 85, red from 100. Fable is the expensive tier and its cap is
+  half the weekly quota, so the field is meant to be legible from the first
+  point spent - not to blend into the bar until it's late. That is why the
+  screenshot up top shows `37.1%` in red beside a `32.0%` in yellow: same week,
+  same deadline, different rulers.
 
 With no usable `resets_at` in the payload there is no deadline to measure
 against. The field falls back to the value scale, and the fields that depend on
@@ -164,8 +174,9 @@ weekly quota. Past that you either keep going on Fable with usage credits or
 switch models to stay inside what's left. Hence the ruler: 100% in this field is
 the point where Fable stops being included in the subscription. Plan terms
 change, so check your own plan page before trusting the constant. If your plan
-reads differently (seat-based Enterprise, for instance, where Fable is
-credits-only) adjust the constant at the top of the file.
+reads differently (standard seats on Team and Enterprise, for instance, where
+Fable runs on credits rather than on an included share) adjust the constant at
+the top of the file.
 
 ### Calibration against the official number
 
@@ -242,6 +253,11 @@ run:
 ```bash
 python statusline.py --calibrate 92 84    # <all%> <fable%>
 ```
+
+It calibrates against the cached weekly share, so it needs the bar to have
+rendered in the last ~20 minutes, on the same day. Otherwise it refuses and says
+so, instead of calibrating against a stale share - open a session, let the bar
+draw once, and run it again.
 
 It compares them against this machine's raw share and prints the
 `FABLE_SHARE_CALIBRATION` that matches. A factor of `1.0` turns the correction off
@@ -363,6 +379,16 @@ The script samples the clock several times per render (`time.time()`,
 `day_start()`). A render that crosses midnight can mix one day's share with the
 other's cost. One crooked bar per day, until the next refresh.
 
+`SCAN_DEADLINE` is checked between files, not inside one. A single very large
+`.jsonl` is read to the end before the budget is looked at again, so the 8
+seconds are a target, not a ceiling. And when the budget does blow with no cache
+to fall back on, the partial work is dropped rather than saved: the three
+derived fields stay away and the next render starts over. Enough history on a
+slow enough disk and that becomes the steady state - the bar keeps working, the
+three Fable and daily fields just never show up. If that is where you are, the
+escape hatch is the one in the section above: make `fable_cap_percent()` and
+`daily_total_percent()` return `None` and the scan stops running at all.
+
 What it does guarantee: it never takes the session down. Every piece of the bar
 runs inside a `safe()`, and whatever fails becomes an empty string and
 disappears without leaving a hole. An empty or invalid payload prints a blank
@@ -443,9 +469,13 @@ library default.
 ## Tests
 
 ```bash
-python statusline.py --selftest     # 217 internal checks, 0 dependencies
+python statusline.py --selftest     # internal checks, 0 dependencies
 python statusline.py --calibrate 92 84   # re-measure Fable's factor: <all%> <fable%>
 ```
+
+It prints how many checks ran: `OK - selftest (250 checks, 0 failure(s))`. The
+count is there because `0 failure(s)` alone would read exactly the same if the
+whole battery had been deleted.
 
 It covers duration and token formatting, the thermometers, context window
 inference, the arithmetic of both caps (clean week, blown previous day, reset
@@ -468,3 +498,8 @@ That file only exists once you've enabled `CLAUDE_STATUSLINE_DEBUG=1`.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+---
+
+Independent project, not affiliated with or endorsed by Anthropic. "Claude" and
+"Claude Code" are theirs; they are used here to say what this thing plugs into.

@@ -1,12 +1,14 @@
 # statusline.py - uma status line de duas linhas pro Claude Code
 
+[![portability](https://github.com/capitulinojr/claude-statusline/actions/workflows/portability.yml/badge.svg)](https://github.com/capitulinojr/claude-statusline/actions/workflows/portability.yml)
+
 Read this in [English](README.md).
 
 ![A statusline: linha de cima com modelo, esforço, nome da sessão, contexto e tokens; linha de baixo com as cotas de 5 horas, do dia e da semana](docs/statusline.png)
 
 ```
 <modelo> <esforco> | <sessao(italico)> · <ctx%> <tokens-sessao>
-<5h%> · <reset-5h> | <fable-dia%> · <dia-total%> | <fable%> <semana%> <reset-semanal>
+------- <5h%> · <reset-5h> | <fable-dia%> · <dia-total%> | <fable%> <semana%> <reset-semanal> -------
 ```
 
 A linha de cima é esta sessão. A de baixo é a cota da conta. Tem uma terceira linha, com um espaço só, pra barra não encostar no prompt logo abaixo.
@@ -60,9 +62,9 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 | Campo                    | O que é                                                                                                                                                                               |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Opus 5 (1M context)`    | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul)                                                                                       |
-| `medium`                 | nível de reasoning effort (`low` … `max`)                                                                                                                                             |
+| `medium`                 | nível de reasoning effort (`low` … `ultracode`)                                                                                                                                       |
 | `Tuning the status line` | nome da sessão, em itálico - o que tu pôs no `/rename`, ou o título que o Claude Code gerou. O script tira os caracteres de controle e trunca o texto antes de ele chegar no terminal |
-| `11.0%`                  | **contexto** - % da janela inteira já ocupada. Passou de 75%, fica vermelho e o aviso `/compact` aparece do lado                                                                      |
+| `11.0%`                  | **contexto** - % da janela inteira já ocupada. De 75% pra cima fica vermelho e o aviso `/compact` aparece do lado                                                                     |
 | `2.9M`                   | tokens acumulados nesta sessão (input + output + cache)                                                                                                                               |
 
 **Linha 2 - as cotas**
@@ -100,12 +102,13 @@ Por isso toda porcentagem que tem prazo (5 horas, dia, semana) é pintada pelo c
 projeção = consumo ÷ fatia do prazo já decorrida   (100 = cai exatamente no teto)
 ```
 
-Termômetro (`SCALE_PACE`): cinza, azul, verde, amarelo, laranja, todos apagados, e **vermelho vivo só quando a projeção passa de 135** - ou seja, quando o ritmo atual estoura o teto com folga. Nada mais grita.
+Termômetro (`SCALE_PACE`): cinza, azul, verde, amarelo, laranja, todos apagados, e **vermelho vivo de uma projeção de 135 pra cima** - ou seja, quando o ritmo atual estoura o teto com folga.
 
-Duas exceções, de propósito:
+Três exceções, de propósito:
 
-- **Contexto** fica no termômetro por valor: vermelho de 75% pra cima, com o aviso `/compact` do lado.
+- **Contexto** fica no termômetro por valor (`SCALE_CTX`): vermelho de 75% pra cima, com o aviso `/compact` do lado.
 - **Cota real acima de `PACE_HARD` (95%)** volta pro vermelho, tenha o ritmo que tiver. Ali o bloqueio chega antes do reset, e isso é acionável até na véspera.
+- **Os dois campos do Fable têm escala própria** (`SCALE_FABLE`) e nunca ficam cinza, azul ou verde: laranja apagado o tempo todo, laranja vivo de uma projeção de 85, vermelho de 100. O Fable é o tier caro e o teto dele é metade da cota da semana, então o campo é feito pra ser legível desde o primeiro ponto gasto - não pra se diluir na barra até ser tarde. É por isso que o print lá em cima mostra `37.1%` em vermelho ao lado de um `32.0%` amarelo: mesma semana, mesmo prazo, réguas diferentes.
 
 Sem um `resets_at` usável no payload não existe prazo pra medir contra. O campo cai pra escala por valor, e os campos que dependem de "quantos dias faltam" somem da barra em vez de virarem chute.
 
@@ -127,7 +130,7 @@ pontos_gastos_pelo_fable = fable_share × seven_day.used_percentage
 % do teto = pontos ÷ 50 × 100                       (FABLE_CAP_SHARE = 50%)
 ```
 
-`FABLE_CAP_SHARE = 0.50` é o **limite declarado pela Anthropic** (conferido em 2026-07-29), não é chute: nos planos Max e Team Premium, o Fable 5 pode consumir *até metade* da tua cota semanal. Passou disso, ou tu segue no Fable com usage credits, ou troca de modelo pra ficar dentro do que sobrou. Daí a régua: 100% neste campo é o ponto em que o Fable deixa de estar incluído na assinatura. Vale enquanto a Anthropic mantiver esse limite - se o teu plano diz outra coisa (Enterprise por assento, por exemplo, onde o Fable é só por crédito), ajusta a constante no topo do arquivo.
+`FABLE_CAP_SHARE = 0.50` é o **limite declarado pela Anthropic** (conferido em 2026-07-29), não é chute: nos planos Max e Team Premium, o Fable 5 pode consumir *até metade* da tua cota semanal. Passou disso, ou tu segue no Fable com usage credits, ou troca de modelo pra ficar dentro do que sobrou. Daí a régua: 100% neste campo é o ponto em que o Fable deixa de estar incluído na assinatura. Vale enquanto a Anthropic mantiver esse limite - se o teu plano diz outra coisa (assento padrão de Team ou Enterprise, por exemplo, onde o Fable roda por crédito em vez de fatia incluída), ajusta a constante no topo do arquivo.
 
 ### Calibração contra o número oficial
 
@@ -173,6 +176,8 @@ Medido com a semana em 92% e **dois dias até o reset** - o número de dias entr
 ```bash
 python statusline.py --calibrate 92 84    # <all%> <fable%>
 ```
+
+Ele calibra contra a fatia semanal em cache, então precisa que a barra tenha renderizado nos últimos ~20 minutos, no mesmo dia. Fora disso ele recusa e diz o motivo, em vez de calibrar contra uma fatia velha - abre uma sessão, deixa a barra desenhar uma vez e roda de novo.
 
 Ele compara com a fatia crua desta máquina e imprime o `FABLE_SHARE_CALIBRATION` que faz bater. Fator `1.0` desliga a correção e devolve o comportamento antigo.
 
@@ -234,6 +239,8 @@ A projeção é linear e o uso humano vem em rajada, então ela lê pessimista d
 
 O script lê o relógio várias vezes por render (`time.time()`, `day_start()`). Um render que atravessa a meia-noite pode misturar a fatia de um dia com o custo do outro. Uma barra torta por dia, até o refresh seguinte.
 
+O `SCAN_DEADLINE` é conferido **entre** arquivos, não dentro de um. Um `.jsonl` muito grande é lido até o fim antes de o orçamento ser olhado de novo, então os 8 segundos são alvo, não teto. E quando o orçamento estoura sem cache pra cair, o trabalho parcial é descartado em vez de salvo: os três campos derivados não aparecem e o render seguinte recomeça do zero. Histórico suficiente num disco lento o bastante e isso vira o estado estável - a barra segue funcionando, só que os três campos do Fable e do dia nunca aparecem. Se for o teu caso, a saída é a mesma da seção acima: fazer `fable_cap_percent()` e `daily_total_percent()` devolverem `None`, e a varredura para de rodar.
+
 O que ele garante: nunca derruba a sessão. Cada pedaço da barra roda dentro de um `safe()`, e o que falha vira string vazia e some sem deixar buraco. Payload vazio ou inválido imprime linha em branco, não stack trace.
 
 ---
@@ -262,9 +269,11 @@ Vem **desligado** de propósito: o payload carrega o nome da tua sessão e camin
 ## Testes
 
 ```bash
-python statusline.py --selftest     # 217 checks internos, 0 dependências
+python statusline.py --selftest     # checks internos, 0 dependências
 python statusline.py --calibrate 92 84   # re-mede o fator do Fable: <all%> <fable%>
 ```
+
+Ele imprime quantos checks rodaram: `OK - selftest (250 checks, 0 falha(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada.
 
 Cobrem formatação de duração e de token, os termômetros, inferência da janela de contexto, a aritmética dos dois tetos (semana limpa, dia anterior estourado, véspera do reset, saldo zerado), decodificação do payload e a montagem das duas linhas. E mais, com arquivo temporário de verdade: o leitor reverso, a deduplicação de streaming, a janela de tempo, o custo ponderado e o cache em disco.
 
@@ -283,3 +292,7 @@ print(subprocess.run(['python', 'statusline.py'], input=raw, capture_output=True
 ## Licença
 
 MIT - ver [LICENSE](LICENSE).
+
+---
+
+Projeto independente, sem afiliação nem endosso da Anthropic. "Claude" e "Claude Code" são deles; aparecem aqui pra dizer em que isso se encaixa.

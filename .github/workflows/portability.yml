@@ -79,6 +79,16 @@ jobs:
         # POSIX strings, never IANA names: on Windows the MSVC CRT silently
         # misparses a name like "America/New_York" into a junk offset, so a test
         # written that way checks nothing there while looking green.
+        #
+        # The POSIX string only buys back HALF of it on Windows. The base offset
+        # is honoured, but the DST rules (the ",M10.3.0/0,M2.3.0/0" tail) are
+        # not: the MSVC CRT applies US dates and a fixed one-hour jump no matter
+        # what the string says. Measured by sweeping 2026 hour by hour - the
+        # midnight-DST and the 30-minute-DST cases, which are the whole reason
+        # these entries exist, only actually happen on the Linux and macOS
+        # runners. Windows stays in the matrix because the base offsets and the
+        # non-integer ones (IST) are real there; it just is not what proves the
+        # DST arithmetic.
         tz:
           - "UTC0"                             # no DST, control
           - "EST5EDT,M3.2.0,M11.1.0"           # DST at 02:00 - a 23h day and a 25h day

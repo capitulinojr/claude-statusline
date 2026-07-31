@@ -377,11 +377,23 @@ def as_text(value) -> str:
 
 
 # C0, DEL and C1 (the basics), plus the ones that do not look like control
-# characters and mess with the layout just the same: U+2028/2029 are the line and
-# paragraph separators, and U+202A-202E and U+2066-2069 are the bidirectional
-# controls, which reorder what has already been written on the line - the
-# "Trojan Source" trick.
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ‪-‮⁦-⁩]")
+# characters and mess with the layout just the same. Three families beyond the
+# obvious: U+2028/2029, the line and paragraph separators, which would break the
+# two-line contract; U+202A-202E and U+2066-2069, the bidirectional overrides and
+# isolates, which reorder what has already been written on the line - the
+# "Trojan Source" trick; and the invisibles that survive every eyeball test
+# (zero-width, word joiner, soft hyphen, LRM/RLM/ALM, ZWNBSP), which pad the
+# text with characters that occupy no column and hide content in plain sight.
+_CONTROL = re.compile(
+    r"["
+    r"\x00-\x1f\x7f-\x9f"           # C0, DEL and C1 (CSI/OSC/DCS in 8 bits)
+    r"\xad"                             # soft hyphen: invisible, splits a word
+    r"\u061c\u200b-\u200f"           # ALM, zero-width, and the LRM/RLM marks
+    r"\u2028\u2029"                   # line and paragraph separators
+    r"\u202a-\u202e\u2066-\u2069"  # bidi overrides/isolates: "Trojan Source"
+    r"\u2060-\u2064\ufeff"           # word joiner, invisible operators, ZWNBSP
+    r"]"
+)
 
 
 def safe_text(value, limit: int = 120) -> str:
@@ -407,7 +419,14 @@ def finite_number(value) -> float | None:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    value = float(value)
+    # A JSON integer has no ceiling, and `float()` on a 400-digit one raises
+    # OverflowError rather than returning `inf`. This is the sanitizer: what
+    # comes in here is exactly what is not to be trusted, so it swallows and
+    # reports "unusable" instead of exploding inside whoever called it.
+    try:
+        value = float(value)
+    except (OverflowError, ValueError):
+        return None
     return value if math.isfinite(value) else None
 
 
@@ -473,14 +492,20 @@ def parse_ts(value) -> float | None:
     text = value.strip()
     if text.endswith(("Z", "z")):
         text = text[:-1] + "+00:00"
+    # `.timestamp()` is what raises on a date outside the platform's range, and
+    # it does not raise ValueError: a year like 1500 comes out as OSError
+    # (errno 22) on Windows, OverflowError elsewhere. Letting either escape is
+    # expensive out of proportion - it aborts the whole scan through the
+    # `except OSError` upstairs, and three fields leave the bar in silence
+    # because one line of one transcript, in any project, carries a bad date.
     try:
         return datetime.fromisoformat(text).timestamp()
-    except ValueError:
+    except (ValueError, OSError, OverflowError):
         pass
     for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
         try:
             return datetime.strptime(text, fmt).timestamp()
-        except ValueError:
+        except (ValueError, OSError, OverflowError):
             continue
     return None
 
@@ -1012,7 +1037,13 @@ def cost_shares(start: float) -> Shares | None:
             cost = entry_cost(entry)
             totals["all"] += cost
             ts = parse_ts(entry.get("timestamp"))
-            is_today = ts is not None and ts >= today
+            # Bounded on both sides. "From midnight on" alone lets an entry
+            # dated in the future - a clock that ran ahead, a transcript copied
+            # from another machine, a mangled timezone - count against today's
+            # cap, inflating it with spending that never happened today. The
+            # slack matches RESET_TOLERANCE: seconds of clock skew are normal,
+            # days are not.
+            is_today = ts is not None and today <= ts <= time.time() + RESET_TOLERANCE
             if is_today:
                 totals["all_day"] += cost
             model = as_text(entry["message"].get("model")).lower()
@@ -1471,17 +1502,27 @@ def load_payload(raw: bytes) -> dict:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = raw.decode("cp1252", errors="replace")  # non-UTF-8 payload: do not crash
+    # Not just ValueError: deeply nested JSON blows the stack and comes out as
+    # RecursionError, which is not a subclass of it. Letting that escape breaks
+    # the one promise this file makes - that it never takes the session down -
+    # and prints a traceback carrying absolute paths from the user's disk.
     try:
         data = json.loads(text)
-    except ValueError:
+    except Exception:
         return {}
     return data if isinstance(data, dict) else {}
 
 
 def selftest() -> int:
     failures = []
+    ran = 0
 
     def check(label, got, want):
+        # Counted, not just failed: "OK - selftest (0 failure(s))" would print
+        # exactly the same if the whole battery had been deleted. The number of
+        # checks that ran is what tells green from empty.
+        nonlocal ran
+        ran += 1
         if got != want:
             failures.append(f"{label}: {got!r} != {want!r}")
 
@@ -2347,7 +2388,7 @@ def selftest() -> int:
 
     for line in failures:
         print(f"FAIL {line}")
-    print(f"{'FAILED' if failures else 'OK'} - selftest ({len(failures)} failure(s))")
+    print(f"{'FAILED' if failures else 'OK'} - selftest ({ran} checks, {len(failures)} failure(s))")
     return 1 if failures else 0
 
 
@@ -2380,7 +2421,11 @@ def main() -> int:
     # CLAUDE_STATUSLINE_DEBUG on: the payload carries the session name and paths,
     # and writing that to disk on every refresh is the user's decision, not a
     # default. Fails silently.
-    if os.environ.get(DEBUG_ENV):
+    # Read as a switch, not for truthiness: `CLAUDE_STATUSLINE_DEBUG=0` is how
+    # a person turns something off, and the bare `os.environ.get(...)` took the
+    # string "0" as true and wrote the dump anyway - the opposite of what was
+    # asked, with personal data as the payment.
+    if os.environ.get(DEBUG_ENV, "").strip().lower() not in ("", "0", "false", "no", "off"):
         try:
             write_private(
                 state_file(DEBUG_DUMP), json.dumps(data, indent=2, ensure_ascii=False)
