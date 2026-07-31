@@ -1982,7 +1982,14 @@ def selftest() -> int:
                 accumulate(entries or [])
                 return complete
 
-            today_iso = datetime.now().replace(hour=12).isoformat()
+            # Noon today, or now if noon has not come yet. On a machine whose
+            # local clock is still in the morning - every runner east of UTC -
+            # a noon timestamp is in the FUTURE, and future-dated entries are
+            # deliberately not counted as today's. The fixture has to be an
+            # instant that already happened, or it tests the guard instead of
+            # the arithmetic.
+            now = datetime.now()
+            today_iso = min(now.replace(hour=12), now).isoformat()
             populated = [
                 {"timestamp": today_iso,
                  "message": {"model": "claude-fable-5",
