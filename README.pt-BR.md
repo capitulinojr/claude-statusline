@@ -2,10 +2,7 @@
 
 Read this in [English](README.md).
 
-```
-Opus 5 (1M context)  medium  |  Tuning the status line  ·  11.0%  2.9M
-------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  37.1%  32.0%  4d 14h -------
-```
+![A statusline: linha de cima com modelo, esforço, nome da sessão, contexto e tokens; linha de baixo com as cotas de 5 horas, do dia e da semana](docs/statusline.png)
 
 ```
 <modelo> <esforco> | <sessao(italico)> · <ctx%> <tokens-sessao>
@@ -23,6 +20,16 @@ Um arquivo, stdlib, zero dependências. Ele lê JSON do stdin e imprime duas lin
 ## Instalação
 
 **Requisitos:** Python 3.8+ no PATH. Mais nada.
+
+### Modo rápido: manda o Claude Code instalar
+
+Baixa o `statusline.py` e cola isto numa sessão:
+
+> Instala esta status line: põe o `statusline.py` que eu baixei em `~/.claude/`, adiciona o bloco `statusLine` no meu `~/.claude/settings.json` apontando pro caminho absoluto dele com `python -S -E`, e roda `--selftest` pra confirmar. Me mostra o diff do settings antes de gravar.
+
+Ele conhece o formato do bloco e acha o `settings.json` sozinho. O pedido do diff não é firula: é o teu arquivo de configuração, e um merge desatento apaga o que já estava lá.
+
+### Modo manual: três passos
 
 1. Salva o `statusline.py` onde tu quiser (ex.: `~/.claude/statusline.py`).
 2. No `~/.claude/settings.json`, põe:
@@ -48,39 +55,42 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 
 **Linha 1 - a sessão**
 
-Relembrando:
-```
-Opus 5 (1M context)  medium  |  Tuning the status line  ·  11.0%  2.9M
-------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  37.1%  32.0%  4d 14h -------
-```
+![Linha 1: Opus 5 (1M context), medium, Tuning the status line, 11.0%, 2.9M](docs/statusline-line1.png)
 
-| Campo                    | O que é                                                                                                                                                                                   |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Opus 5 (1M context)`    | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul)                                                                                           |
-| `medium`                 | nível de reasoning effort (`low` … `max`)                                                                                                                                                 |
-| `Tuning the status line` | nome da sessão, em itálico - o que tu pôs no `/rename`, ou o título que o Claude Code gerou. O script tira os caracteres de controle e trunca o texto antes de ele chegar no teu terminal |
-| `11.0%`                  | **contexto** - % da janela inteira já ocupada. Passou de 75%, fica vermelho e o aviso `/compact` aparece do lado                                                                          |
-| `2.9M`                   | tokens acumulados nesta sessão (input + output + cache)                                                                                                                                   |
+| Campo                    | O que é                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Opus 5 (1M context)`    | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul)                                                                                       |
+| `medium`                 | nível de reasoning effort (`low` … `max`)                                                                                                                                             |
+| `Tuning the status line` | nome da sessão, em itálico - o que tu pôs no `/rename`, ou o título que o Claude Code gerou. O script tira os caracteres de controle e trunca o texto antes de ele chegar no terminal |
+| `11.0%`                  | **contexto** - % da janela inteira já ocupada. Passou de 75%, fica vermelho e o aviso `/compact` aparece do lado                                                                      |
+| `2.9M`                   | tokens acumulados nesta sessão (input + output + cache)                                                                                                                               |
 
 **Linha 2 - as cotas**
 
-| Campo | O que é |
-| --- | --- |
-| `4.0%` | cota da janela de **5 horas** |
-| `4h 47m` | tempo até o reset das 5 horas |
-| `48.5%` | **teto diário do modelo caro** (ver abaixo) |
-| `21.0%` | **teto diário da cota total** - mesmo racionamento, todos os modelos |
-| `37.1%` | quanto do teto do Fable (metade da cota semanal) já foi |
-| `32.0%` | cota da janela **semanal** |
-| `4d 14h` | tempo até o reset semanal |
+![Linha 2: 4.0%, 4h 47m, 48.5%, 21.0%, 37.1%, 32.0%, 4d 14h](docs/statusline-line2.png)
 
-Os dois últimos blocos têm um número do Fable e um do total cada, e os dois usam a **mesma ordem**: `Fable · total` no dia, `Fable total` na semana. Mesma coluna, mesmo significado - tu não inverte o olho no meio da linha. Campo sem dado por trás some da barra, então o número de campos varia. A posição é sempre relativa aos separadores `|`, nunca fixa.
+| Campo    | O que é                                                              |
+| -------- | -------------------------------------------------------------------- |
+| `4.0%`   | cota da janela de **5 horas**                                        |
+| `4h 47m` | tempo até o reset das 5 horas                                        |
+| `48.5%`  | **teto diário do Fable** (ver abaixo)                                |
+| `21.0%`  | **teto diário da cota total** - mesmo racionamento, todos os modelos |
+| `37.1%`  | quanto do teto do Fable (metade da cota semanal) já foi              |
+| `32.0%`  | cota da janela **semanal**                                           |
+| `4d 14h` | tempo até o reset semanal                                            |
 
-### A cor não é o valor, é o ritmo
+Os dois últimos blocos têm um número do Fable e um do total cada, e os dois usam a **mesma ordem**: `Fable · total` no dia, `Fable total` na semana.
+Campo sem dado por trás some da barra, então o número de campos varia. 
+A posição é sempre relativa aos separadores `|`, nunca fixa.
 
-80% da semana no dia 7 sai amarelo. Os mesmos 80% no dia 2 saem vermelho.
+### Termômetro: gradiente de cor por consumo projetado até o reset da janela
 
-Não é bug. No dia 7 a projeção dá ~86: o ciclo está acabando junto contigo. No dia 2 a projeção passa de 250, e a cota acaba na quarta. Uma escala por valor pintaria os dois iguais, sendo que são situações **opostas**.
+80% da cota semanal, no 7º dia, sai amarelo. 
+Os mesmos 80% no 2º dia saem vermelho.
+
+Não é bug. No dia 7 a projeção dá ~86: o ciclo está acabando junto contigo. 
+No dia 2 a projeção passa de 250, e a cota acaba na quarta. 
+Uma escala por valor pintaria os dois iguais, sendo que são situações **opostas**.
 
 É como o combustível do carro. Meio tanque a 10 km de casa não quer dizer a mesma coisa que meio tanque a 400 km.
 
@@ -94,18 +104,19 @@ Termômetro (`SCALE_PACE`): cinza, azul, verde, amarelo, laranja, todos apagados
 
 Duas exceções, de propósito:
 
-- **Contexto** não tem prazo (não reseta sozinho), então fica no termômetro por valor: vermelho de 75% pra cima, com o aviso `/compact` do lado.
+- **Contexto** fica no termômetro por valor: vermelho de 75% pra cima, com o aviso `/compact` do lado.
 - **Cota real acima de `PACE_HARD` (95%)** volta pro vermelho, tenha o ritmo que tiver. Ali o bloqueio chega antes do reset, e isso é acionável até na véspera.
 
 Sem um `resets_at` usável no payload não existe prazo pra medir contra. O campo cai pra escala por valor, e os campos que dependem de "quantos dias faltam" somem da barra em vez de virarem chute.
 
 ---
 
-## O teto do modelo caro (os dois números do Fable)
+## Teto do Fable
 
-O **teto** aqui é oficial. O que o script estima é quanto dele tu já gastou.
+O **teto** é o oficial da Anthropic. O que o script estima é quanto dele tu já gastou.
 
-**O problema:** o Claude Code te entrega a cota agregada (`seven_day.used_percentage`) e nunca diz quanto daquilo foi o modelo caro. Se tu orquestra com Fable e executa com Sonnet/Haiku, o número agregado não te conta se tu está queimando cota no tier errado.
+**O problema:** o Claude Code entrega a cota agregada (`seven_day.used_percentage`) e nunca diz quanto daquilo foi o Fable. 
+Se tu orquestra com Fable e executa com Sonnet/Haiku, o número agregado não te conta se tu está queimando cota no tier errado.
 
 **A estimativa:** o script varre os transcripts (`~/.claude/projects/**/*.jsonl`) da semana corrente. De cada entrada ele tira o **custo ponderado**, pelo preço do modelo daquela entrada: input, output, cache-write e cache-read pesam diferente. Aí projeta a fatia sobre o agregado oficial:
 
@@ -116,40 +127,31 @@ pontos_gastos_pelo_fable = fable_share × seven_day.used_percentage
 % do teto = pontos ÷ 50 × 100                       (FABLE_CAP_SHARE = 50%)
 ```
 
-`FABLE_CAP_SHARE = 0.50` é o **limite declarado pela Anthropic** (conferido em 2026-07-29), não é chute: nos planos Max e Team Premium, o Fable 5 pode consumir *até metade* da tua cota semanal. Passou disso, ou tu segue no Fable com usage credits, ou troca de modelo pra ficar dentro do que sobrou. Daí a régua: 100% neste campo é o ponto em que o Fable deixa de estar incluído na assinatura. Termo de plano muda - confere a página do teu plano antes de confiar nessa constante.
+`FABLE_CAP_SHARE = 0.50` é o **limite declarado pela Anthropic** (conferido em 2026-07-29), não é chute: nos planos Max e Team Premium, o Fable 5 pode consumir *até metade* da tua cota semanal. Passou disso, ou tu segue no Fable com usage credits, ou troca de modelo pra ficar dentro do que sobrou. Daí a régua: 100% neste campo é o ponto em que o Fable deixa de estar incluído na assinatura. Vale enquanto a Anthropic mantiver esse limite - se o teu plano diz outra coisa (Enterprise por assento, por exemplo, onde o Fable é só por crédito), ajusta a constante no topo do arquivo.
 
-(Se o teu plano tem outros termos - Enterprise por assento, por exemplo, onde o Fable é só por crédito - ajusta a constante no topo do arquivo.)
+### Calibração contra o número oficial
 
-### A estimativa é calibrada contra o número oficial
+Preço de API não é peso de cota. A fatia crua sai alta o bastante pra pintar a barra da cor errada, então ela é multiplicada por `FABLE_SHARE_CALIBRATION` antes de virar porcentagem do teto.
 
-O preço de API **não** é o peso da cota, e a diferença é grande o bastante pra pintar a barra da cor errada. Medindo os dois lados no mesmo instante em **2026-07-30**:
+**O valor em uso é 0,894**, média de duas medições contra o número oficial:
 
-| | fatia do Fable na semana | % do teto exibido |
-| --- | --- | --- |
-| estimativa crua | 51,3% | **94,4%** |
-| oficial | ~45,7% | **84%** |
-
-Dez pontos de diferença, sempre pra cima - a barra alarmava antes da hora. Daí a constante `FABLE_FATIA_CALIBRACAO`.
-
-**Duas medições, não uma.** A segunda foi colhida horas depois, com os oficiais já em outro patamar:
-
-| quando | fatia crua | oficial | fator |
+| medição | fatia crua | oficial | fator |
 | --- | --- | --- | --- |
-| 30/07 manhã | 51,33% | 84% de 92% | 0,889 |
-| 30/07 tarde | 50,88% | 86% de 94% | 0,899 |
+| 30/07/2026, manhã | 51,33% | 84% de 92% | 0,889 |
+| 30/07/2026, tarde | 50,88% | 86% de 94% | 0,899 |
 
-Dois pontos independentes caindo a 0,01 um do outro - é isso que sustenta a hipótese do fator estável; com um ponto só não dava pra distinguir viés sistemático de coincidência do dia. Cada ponto carrega ~±0,01 de incerteza só pelo **arredondamento** dos oficiais (a tela entrega inteiros: "84%" é qualquer coisa entre 83,5 e 84,5), então a diferença entre os dois está dentro do ruído. O valor em uso é a **média: 0,894**.
+A margem de cada uma é ~±0,01, e vem toda do arredondamento: a tela de usage serve inteiros, então "84%" é qualquer valor entre 83,5 e 84,5. Os dois fatores caem dentro dessa margem um do outro.
 
-**Onde está o número oficial:** o Claude Code não manda ele no payload (só `five_hour` e `seven_day`), mas o claude.ai mostra em **Settings > Usage**, e a API que alimenta aquela tela (`GET /api/organizations/<org>/usage`) devolve os três limites no array `limits` - a entrada `weekly_all` é a cota total e a `weekly_scoped` com `scope.model.display_name: "Fable"` é o teto do modelo caro.
+Sem a correção, a barra lê cerca de dez pontos acima do oficial - na medição da manhã, 94,4% do teto contra os 84% reais. O desvio é sempre pra cima, então a barra alarma cedo.
 
-**Duas causas podem estar por trás, e uma medição só não separa as duas:**
+**O que o fator absorve.** Duas causas, que uma medição não separa:
 
 1. o peso do Fable na cota ser menor que a razão de preço (hoje 2× o Opus);
 2. consumo que conta na cota mas não deixa transcript local - claude.ai web, Cowork.
 
-A causa 2 **não tem sentido de viés garantido**: o consumo ausente só infla a fatia se for *menos* rico em Fable que o local; sendo mais rico, a fatia local subestima; e com a mesma mistura, não enviesa nada. As duas são absorvíveis pelo mesmo fator multiplicativo enquanto as proporções ficarem estáveis, mas não apontam necessariamente pro mesmo lado.
+A segunda não tem direção garantida. Consumo ausente só infla a fatia se for *menos* rico em Fable que o local; sendo mais rico, a fatia local subestima; e com a mesma mistura, não enviesa nada. O mesmo fator absorve as duas enquanto as proporções ficarem estáveis, mas elas não apontam necessariamente pro mesmo lado. Daí a correção morar na **fatia**, e não no preço: assim ela não afirma qual das duas é.
 
-Por isso o fator é aplicado à **fatia** e não ao preço: assim ele não afirma qual das duas causas é.
+**Onde está o número oficial:** o Claude Code não manda ele no payload (só `five_hour` e `seven_day`), mas o claude.ai mostra em **Settings > Usage**, e a API que alimenta aquela tela (`GET /api/organizations/<org>/usage`) devolve os três limites no array `limits` - a entrada `weekly_all` é a cota total e a `weekly_scoped` com `scope.model.display_name: "Fable"` é o teto do Fable.
 
 ### O teto diário do Fable amplifica o erro
 
@@ -169,10 +171,10 @@ Medido com a semana em 92% e **dois dias até o reset** - o número de dias entr
 **Re-medir** é ler os dois números na tela de usage, no mesmo instante, e rodar:
 
 ```bash
-python statusline.py --calibrar 92 84    # <all%> <fable%>
+python statusline.py --calibrate 92 84    # <all%> <fable%>
 ```
 
-Ele compara com a fatia crua desta máquina e imprime o `FABLE_FATIA_CALIBRACAO` que faz bater. Fator `1.0` desliga a correção e devolve o comportamento antigo.
+Ele compara com a fatia crua desta máquina e imprime o `FABLE_SHARE_CALIBRATION` que faz bater. Fator `1.0` desliga a correção e devolve o comportamento antigo.
 
 ### O teto diário se mexe
 
@@ -192,13 +194,11 @@ A cor desses dois campos também vem do ritmo, medida contra o **fim do dia**. E
 
 **Por que estimar em vez de ler o número oficial?** Porque ele não existe no payload. A [doc da status line](https://code.claude.com/docs/en/statusline) expõe só `rate_limits.five_hour` e `rate_limits.seven_day`, sem quebra por modelo (conferido em 2026-07-26; se aparecer um dia, troca a estimativa por ele). E a ponderação real também não dá pra reconstruir: a Anthropic publica a cota em *horas de modelo*, com faixas largas (Max 5x: 15-35h de Opus por semana), nunca como peso por token.
 
-Então: o **teto** dos dois números é oficial, a posição dentro dele é estimativa. Uma bússola, não contabilidade.
+Então: o **teto** dos dois números é oficial, e a posição dentro dele é estimativa calibrada. Uma bússola, não contabilidade.
 
-E dá pra dizer de quanto é o erro. O painel do Claude Code (`/usage`) mostra o número oficial do modelo caro, que o payload não entrega. Comparei os dois no mesmo instante, em 2026-07-29: o oficial dizia **71%** e a estimativa dizia **77,9%**. Sete pontos **para cima**.
+O que sobra de erro depois da calibração tem causa conhecida, e nenhuma constante resolve: a Anthropic raciona por horas de modelo, o script pondera por custo em dólar. O fator encosta os dois num ponto de operação, e é só isso que ele faz - não transforma um proxy no outro. Mudando muito a mistura de modelos, a diferença volta a abrir.
 
-O erro é conservador, então ele alarma cedo, nunca tarde. E a causa está na frase do parágrafo anterior: a Anthropic raciona por horas de modelo, o script pondera por custo em dólar. São proxies diferentes, e nenhum ajuste de constante conserta isso de verdade - só disfarça numa amostra.
-
-Se quiseres o número exato, olha o `/usage`. A barra é pra tu não precisar olhar.
+O painel do Claude Code (`/usage`) mostra o número oficial do Fable, que o payload não entrega. Se tu quiser o valor exato, é lá. A barra é pra tu não precisar olhar.
 
 Dois detalhes do payload que valem pra qualquer status line. O `rate_limits` só aparece pra assinante Pro/Max **depois da primeira resposta da API na sessão**, e cada janela pode faltar sozinha - por isso tudo aqui passa por `safe()`. E o `context_window.used_percentage` é calculado **só com os tokens de input** (`input + cache_creation + cache_read`, sem `output_tokens`); o fallback do script usa a mesma fórmula pra não divergir do número oficial.
 
@@ -220,7 +220,7 @@ Tudo que tu ia querer mudar mora nas constantes do topo, cada uma com um coment�
 - `SCAN_DEADLINE` (8 s) - orçamento de tempo da varredura dos transcripts. Passou disso, a estimativa da rodada é descartada e vale o último cache, mesmo velho.
 - `PRICES` - USD por 1M tokens, casados pelo prefixo do id do modelo. **Confere as tabelas de preço antes de confiar no número** (as do arquivo foram verificadas em julho de 2026); o casamento é por prefixo, então a ordem das entradas importa.
 - `FABLE_CAP_SHARE` - a fatia da cota semanal que o Fable pode ocupar (0.50 = o limite oficial no Max/Team Premium).
-- `FABLE_FATIA_CALIBRACAO` - correção empírica da fatia estimada do Fable, média de duas medições contra o número oficial em 2026-07-30 (0.894). Re-medir com `--calibrar`; `1.0` desliga.
+- `FABLE_SHARE_CALIBRATION` - correção empírica da fatia estimada do Fable, média de duas medições contra o número oficial em 2026-07-30 (0.894). Re-medir com `--calibrate`; `1.0` desliga.
 - `CTX_HINT` - o texto que aparece quando o contexto passa de 75%.
 - `QUOTA_DASHES` - o risquinho que abre e fecha a segunda linha.
 
@@ -262,8 +262,8 @@ Vem **desligado** de propósito: o payload carrega o nome da tua sessão e camin
 ## Testes
 
 ```bash
-python statusline.py --selftest     # ~210 checks internos, 0 dependências
-python statusline.py --calibrar 92 84   # re-mede o fator do Fable: <all%> <fable%>
+python statusline.py --selftest     # 217 checks internos, 0 dependências
+python statusline.py --calibrate 92 84   # re-mede o fator do Fable: <all%> <fable%>
 ```
 
 Cobrem formatação de duração e de token, os termômetros, inferência da janela de contexto, a aritmética dos dois tetos (semana limpa, dia anterior estourado, véspera do reset, saldo zerado), decodificação do payload e a montagem das duas linhas. E mais, com arquivo temporário de verdade: o leitor reverso, a deduplicação de streaming, a janela de tempo, o custo ponderado e o cache em disco.

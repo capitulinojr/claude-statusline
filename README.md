@@ -2,9 +2,11 @@
 
 Leia em [português](README.pt-BR.md).
 
+![The status line: top line with model, effort, session name, context and tokens; bottom line with the 5-hour, daily and weekly quotas](docs/statusline.png)
+
 ```
-Opus 5 (1M context)  medium  |  Tuning the status line  ·  11.0%  2.9M
-------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  37.1%  32.0%  4d 14h -------
+<model> <effort> | <session(italic)> · <ctx%> <session-tokens>
+<5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset>
 ```
 
 The top line is this session. The bottom line is your account quota. There is a
@@ -22,6 +24,21 @@ lines. That is the entire architecture.
 ## Install
 
 You need Python 3.8+ on your PATH. Nothing else.
+
+### Fast: have Claude Code install it
+
+Download `statusline.py` and paste this into a session:
+
+> Install this status line: put the `statusline.py` I downloaded in `~/.claude/`,
+> add the `statusLine` block to my `~/.claude/settings.json` pointing at its
+> absolute path with `python -S -E`, and run `--selftest` to confirm. Show me the
+> settings diff before you write it.
+
+It knows the block format and finds `settings.json` on its own. Asking for the
+diff isn't ceremony: that is your configuration file, and a careless merge drops
+whatever was already in it.
+
+### Manual: three steps
 
 1. Save `statusline.py` wherever you like (e.g. `~/.claude/statusline.py`).
 
@@ -51,6 +68,8 @@ faster, and a dirty `PYTHONPATH` can't break it.
 
 **Line 1: the session**
 
+![Line 1: Opus 5 (1M context), medium, Tuning the status line, 11.0%, 2.9M](docs/statusline-line1.png)
+
 | Field | What |
 | --- | --- |
 | `Opus 5 (1M context)` | the model, colored by tier: Fable orange and **bold**, Opus cyan, Sonnet yellow, Haiku blue |
@@ -60,6 +79,8 @@ faster, and a dirty `PYTHONPATH` can't break it.
 | `2.9M` | tokens this session accumulated (input + output + cache) |
 
 **Line 2: the quotas**
+
+![Line 2: 4.0%, 4h 47m, 48.5%, 21.0%, 37.1%, 32.0%, 4d 14h](docs/statusline-line2.png)
 
 | Field | What |
 | --- | --- |
@@ -77,10 +98,10 @@ column, same meaning - you don't flip your eye halfway through the line. A field
 disappears from the bar when there is no data behind it, so the number of fields
 varies. Position is relative to the `|` separators, never fixed.
 
-### The color is not the value. It's the pace.
+### Thermometer: color from the consumption projected to the window's reset
 
-`80%` of the week on day 7 comes out yellow. The same `80%` on day 2 comes out
-red.
+`80%` of the weekly quota, on day 7, comes out yellow. The same `80%` on day 2
+comes out red.
 
 Same number, opposite situations. On day 7 the cycle is ending along with you
 and it resets tomorrow, so the projection lands at ~86. On day 2 you burned the
@@ -115,7 +136,7 @@ against. The field falls back to the value scale, and the fields that depend on
 
 ---
 
-## The expensive model's cap (the two Fable numbers)
+## Fable's cap
 
 The cap is official. What the script estimates is how much of it you already
 spent.
@@ -146,56 +167,48 @@ change, so check your own plan page before trusting the constant. If your plan
 reads differently (seat-based Enterprise, for instance, where Fable is
 credits-only) adjust the constant at the top of the file.
 
-### The estimate is calibrated against the official number
+### Calibration against the official number
 
-API price is **not** the quota weight, and the gap is wide enough to paint the bar
-the wrong color. Measuring both sides at the same instant on **2026-07-30**:
+API price is not quota weight. The raw share comes out high enough to paint the
+bar the wrong color, so it is multiplied by `FABLE_SHARE_CALIBRATION` before it
+becomes a percentage of the cap.
 
-| | Fable's share of the week | % of the cap shown |
-| --- | --- | --- |
-| raw estimate | 51.3% | **94.4%** |
-| official | ~45.7% | **84%** |
+**The value in use is 0.894**, the average of two measurements against the
+official number:
 
-Ten points apart, always upward - the bar was crying wolf. Hence the
-`FABLE_SHARE_CALIBRATION` constant.
-
-**Two measurements, not one.** The second was taken hours later, with the official
-numbers already at another level:
-
-| when | raw share | official | factor |
+| measurement | raw share | official | factor |
 | --- | --- | --- | --- |
-| Jul 30, morning | 51.33% | 84% of 92% | 0.889 |
-| Jul 30, afternoon | 50.88% | 86% of 94% | 0.899 |
+| 2026-07-30, morning | 51.33% | 84% of 92% | 0.889 |
+| 2026-07-30, afternoon | 50.88% | 86% of 94% | 0.899 |
 
-Two independent points landing 0.01 from each other - that is what supports the
-stable-factor hypothesis; with a single point there was no telling systematic bias
-from a coincidence of that day. Each point carries ~±0.01 of uncertainty from the
-**rounding** of the official numbers alone (the screen serves integers: "84%" is
-anything between 83.5 and 84.5), so the gap between the two sits inside the noise.
-The value in use is their **average: 0.894**.
+Each one carries a margin of ~±0.01, all of it from rounding: the usage screen
+serves integers, so "84%" is anything between 83.5 and 84.5. The two factors land
+inside that margin of each other.
 
-**Where the official number lives:** Claude Code doesn't send it in the payload
-(only `five_hour` and `seven_day`), but claude.ai shows it under **Settings >
-Usage**, and the API behind that screen (`GET /api/organizations/<org>/usage`)
-returns all three limits in the `limits` array - the `weekly_all` entry is the
-total quota, and the `weekly_scoped` one with `scope.model.display_name: "Fable"`
-is the expensive model's cap.
+Without the correction the bar reads about ten points above the official number -
+in the morning measurement, 94.4% of the cap against the real 84%. The deviation
+is always upward, so the bar cries wolf early.
 
-**Two causes may be behind it, and a single measurement can't separate them:**
+**What the factor absorbs.** Two causes, which one measurement can't separate:
 
 1. Fable's weight against the quota being lower than the price ratio (today 2×
    Opus);
 2. usage that counts against the quota but leaves no local transcript - claude.ai
    web, Cowork.
 
-Cause 2 has **no guaranteed direction**: absent usage only inflates the share if
-it is *less* Fable-heavy than the local one; being more Fable-heavy, the local
-share understates; and with the same mix, it biases nothing. Both are absorbable
-by the same multiplicative factor while the proportions stay stable, but they
-don't necessarily point the same way.
+The second has no guaranteed direction. Absent usage only inflates the share if it
+is *less* Fable-heavy than the local one; being more Fable-heavy, the local share
+understates; and with the same mix, it biases nothing. The same factor absorbs
+both while the proportions stay stable, but they don't necessarily point the same
+way. Hence the correction living on the **share** rather than on the price: that
+way it doesn't claim which of the two it is.
 
-That's why the factor is applied to the **share** and not to the price: it doesn't
-claim which of the two causes it is.
+**Where the official number lives:** Claude Code doesn't send it in the payload
+(only `five_hour` and `seven_day`), but claude.ai shows it under **Settings >
+Usage**, and the API behind that screen (`GET /api/organizations/<org>/usage`)
+returns all three limits in the `limits` array - the `weekly_all` entry is the
+total quota, and the `weekly_scoped` one with `scope.model.display_name: "Fable"`
+is Fable's cap.
 
 ### Fable's daily cap amplifies the error
 
@@ -270,20 +283,18 @@ real weighting can't be reconstructed either: Anthropic publishes the quota in
 model hours with wide ranges (Max 5x: 15-35h of Opus per week), never as
 per-token weight.
 
-So the cap behind both numbers is official, and the position inside it is an
-estimate. A compass, not accounting.
+So the cap behind both numbers is official, and the position inside it is a
+calibrated estimate. A compass, not accounting.
 
-And the error can be quantified. Claude Code's own usage panel (`/usage`) shows
-the official number for the expensive model, the one the payload doesn't hand
-over. I compared the two at the same moment, on 2026-07-29: the official one
-said **71%**, the estimate said **77.9%**. Seven points high.
+What's left of the error after the calibration has a known cause that no constant
+solves: Anthropic rations by model hours, the script weighs by dollar cost. The
+factor pins the two together at one operating point, and that is all it does - it
+doesn't turn one proxy into the other. Change the model mix enough and the gap
+opens again.
 
-The error is conservative, so it warns early, never late. The cause is in the
-paragraph above: Anthropic rations by model hours, the script weighs by dollar
-cost. Different proxies, and no constant tweak really fixes that - it only
-disguises it on one sample.
-
-Want the exact number, check `/usage`. The bar is so you don't have to.
+Claude Code's own usage panel (`/usage`) shows the official Fable number, the one
+the payload doesn't hand over. Want the exact value, it's there. The bar is so you
+don't have to look.
 
 Two payload details worth knowing for any status line. `rate_limits` only shows
 up for Pro/Max subscribers, and only after the first API response in the
@@ -432,7 +443,7 @@ library default.
 ## Tests
 
 ```bash
-python statusline.py --selftest     # ~210 internal checks, 0 dependencies
+python statusline.py --selftest     # 217 internal checks, 0 dependencies
 python statusline.py --calibrate 92 84   # re-measure Fable's factor: <all%> <fable%>
 ```
 
