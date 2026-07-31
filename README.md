@@ -88,7 +88,7 @@ faster, and a dirty `PYTHONPATH` can't break it.
 | --- | --- |
 | `4.0%` | the `5-hour` window quota |
 | `4h 47m` | time left until the 5-hour reset |
-| `48.5%` | the daily cap of the expensive model (see below) |
+| `48.5%` | Fable's daily cap (see below) |
 | `21.0%` | the daily cap of the total quota, same rationing, all models |
 | `37.1%` | how much of the Fable cap (half the weekly quota) is gone |
 | `32.0%` | the `weekly` window quota |
@@ -152,7 +152,7 @@ The cap is official. What the script estimates is how much of it you already
 spent.
 
 Claude Code hands you the aggregate quota (`seven_day.used_percentage`) and
-never says how much of it was the expensive model. Orchestrate with Fable and
+never says how much of it was Fable. Orchestrate with Fable and
 execute with Sonnet and Haiku, and the aggregate number can't tell you whether
 you are burning quota on the wrong tier.
 
