@@ -4,7 +4,7 @@ Leia em [português](README.pt-BR.md).
 
 ```
 Opus 5 (1M context)  medium  |  Tuning the status line  ·  11.0%  2.9M
-------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  32.0%  37.1%  4d 14h -------
+------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  37.1%  32.0%  4d 14h -------
 ```
 
 The top line is this session. The bottom line is your account quota. There is a
@@ -67,14 +67,15 @@ faster, and a dirty `PYTHONPATH` can't break it.
 | `4h 47m` | time left until the 5-hour reset |
 | `48.5%` | the daily cap of the expensive model (see below) |
 | `21.0%` | the daily cap of the total quota, same rationing, all models |
-| `32.0%` | the `weekly` window quota |
 | `37.1%` | how much of the Fable cap (half the weekly quota) is gone |
+| `32.0%` | the `weekly` window quota |
 | `4d 14h` | time left until the weekly reset |
 
-The middle block holds two numbers, in this order: `Fable daily cap · total
-daily cap`. A field disappears from the bar when there is no data behind it, so
-the number of fields varies. Position is relative to the `|` separators, never
-fixed.
+The last two blocks each hold a Fable number and a total number, and both use the
+**same order**: `Fable · total` for the day, `Fable total` for the week. Same
+column, same meaning - you don't flip your eye halfway through the line. A field
+disappears from the bar when there is no data behind it, so the number of fields
+varies. Position is relative to the `|` separators, never fixed.
 
 ### The color is not the value. It's the pace.
 
@@ -131,6 +132,7 @@ the share onto the official aggregate:
 
 ```
 fable_share  = fable_cost / total_cost              (over the 7 days)
+fable_share  = fable_share × 0.894                  (measured calibration, below)
 points_spent_by_fable = fable_share × seven_day.used_percentage
 % of the cap = points ÷ 50 × 100                    (FABLE_CAP_SHARE = 50%)
 ```
@@ -143,6 +145,94 @@ the point where Fable stops being included in the subscription. Plan terms
 change, so check your own plan page before trusting the constant. If your plan
 reads differently (seat-based Enterprise, for instance, where Fable is
 credits-only) adjust the constant at the top of the file.
+
+### The estimate is calibrated against the official number
+
+API price is **not** the quota weight, and the gap is wide enough to paint the bar
+the wrong color. Measuring both sides at the same instant on **2026-07-30**:
+
+| | Fable's share of the week | % of the cap shown |
+| --- | --- | --- |
+| raw estimate | 51.3% | **94.4%** |
+| official | ~45.7% | **84%** |
+
+Ten points apart, always upward - the bar was crying wolf. Hence the
+`FABLE_SHARE_CALIBRATION` constant.
+
+**Two measurements, not one.** The second was taken hours later, with the official
+numbers already at another level:
+
+| when | raw share | official | factor |
+| --- | --- | --- | --- |
+| Jul 30, morning | 51.33% | 84% of 92% | 0.889 |
+| Jul 30, afternoon | 50.88% | 86% of 94% | 0.899 |
+
+Two independent points landing 0.01 from each other - that is what supports the
+stable-factor hypothesis; with a single point there was no telling systematic bias
+from a coincidence of that day. Each point carries ~±0.01 of uncertainty from the
+**rounding** of the official numbers alone (the screen serves integers: "84%" is
+anything between 83.5 and 84.5), so the gap between the two sits inside the noise.
+The value in use is their **average: 0.894**.
+
+**Where the official number lives:** Claude Code doesn't send it in the payload
+(only `five_hour` and `seven_day`), but claude.ai shows it under **Settings >
+Usage**, and the API behind that screen (`GET /api/organizations/<org>/usage`)
+returns all three limits in the `limits` array - the `weekly_all` entry is the
+total quota, and the `weekly_scoped` one with `scope.model.display_name: "Fable"`
+is the expensive model's cap.
+
+**Two causes may be behind it, and a single measurement can't separate them:**
+
+1. Fable's weight against the quota being lower than the price ratio (today 2×
+   Opus);
+2. usage that counts against the quota but leaves no local transcript - claude.ai
+   web, Cowork.
+
+Cause 2 has **no guaranteed direction**: absent usage only inflates the share if
+it is *less* Fable-heavy than the local one; being more Fable-heavy, the local
+share understates; and with the same mix, it biases nothing. Both are absorbable
+by the same multiplicative factor while the proportions stay stable, but they
+don't necessarily point the same way.
+
+That's why the factor is applied to the **share** and not to the price: it doesn't
+claim which of the two causes it is.
+
+### Fable's daily cap amplifies the error
+
+The **weekly** field responds proportionally to the factor. The **daily** one does
+not - and that isn't an effect of the calibration, it's the shape of the
+rationing. The daily cap divides the **balance** (`50 − what Fable spent before
+today`), and near the cap that balance is the difference between two nearly equal
+numbers:
+
+| factor | share | weekly | daily |
+| --- | --- | --- | --- |
+| 1.000 (raw) | 50.8% | 93.4% | **89.2%** |
+| 0.920 | 46.7% | 86.0% | 51.4% |
+| **0.894** (in use) | 45.4% | **83.5%** | **44.6%** |
+| 0.800 | 40.6% | 74.7% | 28.7% |
+
+Measured with the week at 92% and **two days until the reset** - the day count
+feeds the cap calculation, so it is part of the measurement. One point of error in
+the share moves the weekly ~1.8 points and the daily by tens. **Read the daily as an order of magnitude, not
+as a measurement.** Leaving it raw next to a calibrated weekly would be worse - it
+would mix two rulers on the same bar.
+
+> **The calibration holds for the weighting Anthropic applied on 2026-07-30.** It
+> is not a constant of nature - they can re-weight the quota whenever they want,
+> and the day they do, the factor is wrong with nothing to flag it. Nothing in the
+> script detects that aging; only re-measuring does.
+
+**To re-measure,** read both numbers off the usage screen, at the same moment, and
+run:
+
+```bash
+python statusline.py --calibrate 92 84    # <all%> <fable%>
+```
+
+It compares them against this machine's raw share and prints the
+`FABLE_SHARE_CALIBRATION` that matches. A factor of `1.0` turns the correction off
+and restores the old behavior.
 
 ### The daily cap moves
 
@@ -238,6 +328,9 @@ comment:
   2026. Matching is by prefix, so entry order matters.
 - `FABLE_CAP_SHARE`: the share of the weekly quota Fable may occupy (0.50 = the
   official limit on Max/Team Premium).
+- `FABLE_SHARE_CALIBRATION`: empirical correction of Fable's estimated share, the
+  average of two measurements against the official number on 2026-07-30 (0.894).
+  Re-measure with `--calibrate`; `1.0` turns it off.
 - `CTX_HINT`: the text that shows up once context passes 75%.
 - `QUOTA_DASHES`: the little rule that opens and closes the second line.
 
@@ -339,7 +432,8 @@ library default.
 ## Tests
 
 ```bash
-python statusline.py --selftest     # ~200 internal checks, 0 dependencies
+python statusline.py --selftest     # ~210 internal checks, 0 dependencies
+python statusline.py --calibrate 92 84   # re-measure Fable's factor: <all%> <fable%>
 ```
 
 It covers duration and token formatting, the thermometers, context window

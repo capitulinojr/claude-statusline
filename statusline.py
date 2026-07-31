@@ -4,7 +4,7 @@
 Reads the status line JSON from stdin and prints TWO ANSI lines. Layout:
 
     <model> <effort> | <session(italic)> · <ctx%> <session-tokens>
-    <5h%> · <5h-reset> | <fable-day%> · <day-total%> | <week%> <fable%> <weekly-reset>
+    <5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset>
 
 Line 1 = what belongs to this session (model, effort, name, context, tokens);
 line 2 = the account quotas (the 5-hour window and the weekly one).
@@ -23,6 +23,15 @@ Fable's cap is Anthropic's official limit - half the weekly quota on Max/Team
 Premium; past that Fable only keeps going on usage credits. What the script
 estimates is how much of that cap is already gone (see `fable_cap_percent`).
 
+That estimate is CALIBRATED against the official number, and the calibration
+holds for the weighting Anthropic applied on the date it was measured -
+2026-07-30, the `FABLE_SHARE_CALIBRATION`. It is not a constant of nature:
+Anthropic can change how much each model weighs against the quota whenever it
+wants, and the day it does the factor becomes wrong with nothing to flag it.
+Re-measure with `--calibrate <all%> <fable%>`, reading both numbers under
+Settings > Usage on claude.ai (the same place the first pair came from). The
+history of the measurements lives in the constant's comment.
+
 The middle block of line 2 carries the two DAILY caps, measured over the current
 calendar day (00:00 to 23:59 local): Fable's on the left, the TOTAL quota's (all
 models) on the right. Both use the same MOVING cap: the week's balance left at
@@ -39,11 +48,33 @@ of coming out guessed.
 
 Usage:  python statusline.py            (reads the payload from stdin)
         python statusline.py --selftest  (internal checks)
+        python statusline.py --calibrate 92 84   (re-measures Fable's factor
+                                                  against the usage screen:
+                                                  <all%> <fable%>)
 
 Any failure prints whatever was already assembled - the status line never takes
 the session down.
 
 Known limits (adversarial review 2026-07-29, what was left out):
+  - Fable's calibration rests on ONE measurement (2026-07-30) and does not
+    separate the two possible causes of the bias - a quota weight lower than the
+    price ratio, or usage with no local transcript (claude.ai web, Cowork). While
+    the usage mix looks like it did that day, the factor corrects for both; change
+    the mix a lot and it starts correcting too little or too much. It ages
+    silently: nothing here detects that Anthropic re-weighted the quota - only
+    re-measuring does.
+  - Fable's DAILY cap is far more sensitive to the calibration than the weekly
+    one, and that is not an effect of the calibration: it is the shape of the
+    rationing. The daily cap divides the BALANCE (cap - spent before today), and
+    near the cap that balance is the difference between two nearly equal numbers.
+    Measured with the week at 92% and TWO days until the reset (the day count
+    feeds the cap, so it is part of the measurement): the factor moves the weekly
+    from 93.4% to 83.5% (proportional), but the daily from 89.2% to 44.6%.
+    So the daily
+    field inherits the estimate's uncertainty AMPLIFIED - read it as an order of
+    magnitude, not as a measurement. Leaving the daily RAW next to a calibrated
+    weekly would be worse (the 2026-07-30 adversarial review preferred calibrating
+    both to mixing two rulers).
   - The projection is LINEAR and human usage comes in bursts, so it is
     pessimistic in the morning and optimistic in the small hours. The floors
     (PACE_FLOOR_*) only cut the numeric blow-up at the start of the window;
@@ -174,6 +205,51 @@ SEVEN_DAYS = 7 * 86400
 # included and starts consuming credits.
 FABLE_CAP_SHARE = 0.50
 FABLE_PREFIXES = ("claude-fable",)
+
+# Empirical correction of Fable's estimated share, measured against the OFFICIAL
+# number. The share comes from a scan of local transcripts weighted by API PRICE,
+# and price is not the quota weight: measuring both sides at the same instant
+# (2026-07-30), the bar read 94.4% of the cap against the official 84%.
+#
+# The official number lives on claude.ai, in `GET /api/organizations/<org>/usage`,
+# inside the `limits` array: the entry with `kind: "weekly_scoped"` whose
+# `scope.model.display_name` is "Fable" is Fable's cap, and `weekly_all` is the
+# total quota. The payload Claude Code sends here carries only `five_hour` and
+# `seven_day` - the per-model field exists server-side and does NOT reach us,
+# which is why this bar estimates instead of reading.
+#
+# TWO causes may be behind it, and a single measurement cannot separate them:
+# (a) Fable's weight in the quota being lower than the PRICE ratio (today 2x
+# Opus); (b) usage that counts against the quota but leaves no local transcript
+# (claude.ai web, Cowork).
+#
+# Cause (b) has NO guaranteed direction, and saying it "inflates the share" was
+# too strong (corrected in the 2026-07-30 adversarial review): absent usage only
+# inflates if it is LESS Fable-heavy than the local one; being more Fable-heavy,
+# the local share understates; and with the same mix, it biases nothing. Both are
+# absorbable by the same empirical factor while the proportions stay stable, but
+# they do not necessarily point the same way.
+#
+# That is why the factor applies to the SHARE and not to the price: it does not
+# claim which cause it is.
+#
+# Re-measure with `--calibrate <all%> <fable%>`, reading both numbers off the
+# usage screen, and paste the result here. 1.0 = no correction (the old behavior).
+#
+# MEASUREMENTS so far - the value in use is their average:
+#
+#   2026-07-30 morning   raw share 51.33%   official 84% of 92%   ->  0.889
+#   2026-07-30 afternoon raw share 50.88%   official 86% of 94%   ->  0.899
+#
+# Two independent points, taken hours apart and with the official numbers already
+# at another level, landing 0.01 from each other: that is what supports the
+# stable-factor hypothesis - with a single point there was no way to tell
+# "systematic bias" from "coincidence of that day". Each point carries ~±0.01 of
+# uncertainty from the ROUNDING of the official numbers alone, which the screen
+# serves as integers ("84%" is anything between 83.5 and 84.5) - so the gap
+# between the two sits inside the noise, and there is no drift to chase. Hence the
+# average, rather than the most recent one.
+FABLE_SHARE_CALIBRATION = 0.894
 # The weekly share moves slowly and the scan now covers the subagents too, so it
 # reads a lot more disk. 10 min keeps the cost near 1% of one core; below that
 # the scan gets heavy again without improving the reading.
@@ -1095,8 +1171,14 @@ def fable_cap_percent(data: dict) -> tuple[float, float] | None:
     if shares is None:  # no basis to estimate the share: both fields disappear
         return None
     weekly_cap = FABLE_CAP_SHARE * 100  # quota points Fable may occupy
-    week_spent = shares.fable * window.percent
-    today_spent = shares.fable_day * window.percent
+    # The calibration is applied HERE, at consumption time, and not inside
+    # `cost_shares`: that way the cache keeps the RAW share and changing the
+    # factor takes effect immediately, with no need to invalidate the file (and
+    # without mixing measurement and correction into the same number).
+    share = shares.fable * FABLE_SHARE_CALIBRATION
+    day_share = shares.fable_day * FABLE_SHARE_CALIBRATION
+    week_spent = share * window.percent
+    today_spent = day_share * window.percent
     # NOT capped, for the same reason the daily cap is not: 100% here is the
     # point where Fable leaves the included tier and starts eating credits, so
     # 144% is the most actionable thing on the bar - "you passed it a while ago".
@@ -1105,6 +1187,138 @@ def fable_cap_percent(data: dict) -> tuple[float, float] | None:
     pct_week = week_spent / weekly_cap * 100
     pct_day = daily_cap_percent(week_spent, today_spent, weekly_cap, window.days)
     return pct_week, pct_day
+
+
+def calibration_factor(raw_share: float, all_percent: float, fable_percent: float) -> float:
+    """The `FABLE_SHARE_CALIBRATION` that would make the bar reproduce the official.
+
+    The bar shows `share * factor * all_percent / (FABLE_CAP_SHARE * 100) * 100`.
+    Setting that equal to Fable's official number and isolating the factor:
+
+        factor = fable_percent * FABLE_CAP_SHARE / (raw_share * all_percent)
+
+    ValueError when no division is possible: a share or a quota at zero is not a
+    bad calibration, it is a missing measurement - and returning a number there
+    would invent a factor wearing the face of a measured one.
+
+    Everything goes through `finite_number` BEFORE any range comparison, for the
+    same reason the rest of the file does it: NaN slips past range checks, because
+    every comparison against it is false. A `nan` typed into the command would
+    walk through the `if`s untouched and come out as a NaN factor, which would
+    then erase both Fable fields from the bar without saying why (finding from the
+    2026-07-30 adversarial review).
+    """
+    values = [finite_number(v) for v in (raw_share, all_percent, fable_percent)]
+    if any(v is None for v in values):
+        raise ValueError("invalid number: finite values only")
+    raw_share, all_percent, fable_percent = values
+    if not 0 < raw_share <= 1:
+        raise ValueError("share outside 0..1: no measurement to calibrate against")
+    if all_percent <= 0:
+        raise ValueError("total quota at zero: no measurement to calibrate against")
+    if fable_percent < 0:
+        raise ValueError("negative Fable percentage")
+    return fable_percent * FABLE_CAP_SHARE / (raw_share * all_percent)
+
+
+def cache_is_calibratable(start: float, day: float, written_at: float, now: float) -> str:
+    """Why the cache CANNOT be used to calibrate; "" when it can.
+
+    Split out of `calibrate_command` so it has a deterministic test - code that
+    reads the clock has none - and because this is precisely the rule that keeps
+    the factor from crossing two periods, which was the 2026-07-30 review finding.
+
+    Week and day are HARD cuts: last week's share against this week's official
+    number yields a perfectly formatted factor that means nothing. Freshness is
+    deliberately loose (2x the TTL): the weekly share moves slowly - the very
+    reason the TTL exists - and the cache only gets much older than that when the
+    bar stopped rendering. Cutting at 1x would refuse to calibrate during the
+    seconds the cache sits expired waiting for the next render.
+    """
+    if not 0 <= now - start <= SEVEN_DAYS:
+        return "from another week"
+    if abs(day - day_start()) >= 1:
+        return "from another day"
+    age = now - written_at
+    if age < 0 or age >= 2 * WEEK_CACHE_TTL:
+        return f"too old ({age / 60:.0f} min, limit {2 * WEEK_CACHE_TTL // 60})"
+    return ""
+
+
+def calibrate_command(argv) -> int:
+    """`--calibrate <all%> <fable%>` - recompute the factor against the usage screen.
+
+    Both numbers are the ones claude.ai shows under Settings > Usage (and which
+    the API returns in `limits`, as `weekly_all` and `weekly_scoped`/Fable). The
+    raw share comes from this machine's cache, so the command only works after
+    the bar has scanned the transcripts at least once.
+    """
+    def number(text: str) -> float:
+        # `float("nan")` and `float("inf")` do NOT raise - they would come through
+        # intact and only blow up later, as an absurd factor.
+        value = finite_number(float(text.strip().rstrip("%").replace(",", ".")))
+        if value is None:
+            raise ValueError("not finite")
+        return value
+
+    try:
+        all_percent = number(argv[0])
+        fable_percent = number(argv[1])
+    except (IndexError, ValueError):
+        print(
+            "usage: statusline.py --calibrate <all%> <fable%>\n"
+            "\n"
+            "  Both numbers come from Settings > Usage on claude.ai:\n"
+            "    <all%>    weekly limit across all models\n"
+            "    <fable%>  weekly limit for Fable\n"
+            "\n"
+            "  Read both at the SAME moment: they move, and calibrating with\n"
+            "  numbers taken at different times bakes the drift into the factor."
+        )
+        return 2
+
+    # The cache has to be from THIS week, THIS day, and be fresh. Calibrating
+    # against last week's share would hand back a perfectly formatted factor that
+    # crosses two periods - an invented number wearing the face of a measured one,
+    # which is exactly what this bar refuses everywhere else. These are the same
+    # checks `read_cache` runs, spelled out here because there is no payload (and
+    # therefore no `resets_at`) to hand it. Finding from the 2026-07-30 review.
+    try:
+        cached = json.loads(state_file(WEEK_CACHE_FILE).read_text(encoding="utf-8"))
+        raw_share, start, day, written_at = (
+            finite_number(cached.get(key))
+            for key in ("share", "start", "day_start", "ts")
+        )
+    except (OSError, ValueError, AttributeError):
+        raw_share = start = day = written_at = None
+    if None in (raw_share, start, day, written_at):
+        print("no weekly share cache yet - let the bar render once and try again")
+        return 1
+
+    reason = cache_is_calibratable(start, day, written_at, time.time())
+    if reason:
+        print(f"the weekly share cache is {reason} - calibrating against it would"
+              " cross two periods.\nlet the bar render once and try again")
+        return 1
+
+    try:
+        new = calibration_factor(raw_share, all_percent, fable_percent)
+    except ValueError as error:
+        print(str(error))
+        return 1
+
+    cap = FABLE_CAP_SHARE * 100
+    current = raw_share * FABLE_SHARE_CALIBRATION * all_percent / cap * 100
+    raw = raw_share * all_percent / cap * 100
+    print(f"raw Fable share (cache)     {raw_share * 100:.2f}%")
+    print(f"uncalibrated the bar shows   {raw:.1f}%")
+    print(f"factor in use now            {FABLE_SHARE_CALIBRATION}")
+    print(f"and with it the bar shows    {current:.1f}%")
+    print(f"official you reported        {fable_percent:.1f}%"
+          f"  (out of {all_percent:.1f}% of the total quota)")
+    print()
+    print(f"factor that matches:  FABLE_SHARE_CALIBRATION = {new:.3f}")
+    return 0
 
 
 def reset_in(data: dict, window: str) -> str:
@@ -1222,8 +1436,10 @@ def render(data: dict) -> str:
     block_5h = join_with_dot(pct_5h_txt, paint(reset_5h, C_RESET_5H))
     # The two daily caps: Fable on the left, total quota on the right.
     day_block = join_with_dot(pct_fable_day_txt, pct_day_total_txt)
-    # No "·" here: the last block closes with a single space up to the weekly timer.
-    week_block = join(pct_week_txt, pct_fable_txt, paint(reset_week, C_RESET_WEEK))
+    # Same order as the day block: Fable on the left, total quota on the right - so
+    # both blocks are read from the same position, with no flip halfway through the
+    # line. No "·" here: the last block closes with a single space up to the timer.
+    week_block = join(pct_fable_txt, pct_week_txt, paint(reset_week, C_RESET_WEEK))
     model_block = join(
         paint(model, model_color),
         paint(effort, EFFORT_COLORS.get(effort.lower(), C_EFFORT)),
@@ -1372,6 +1588,92 @@ def selftest() -> int:
     check("fable below pace is muted orange", fable_sgr(40.0, 0.5), "38;5;173")
     check("fable projecting an overrun is red", fable_sgr(60.0, 0.5), SCALE_FABLE_ALERT)
     check("fable with no deadline goes back to the value cut", fable_sgr(85.0, None), SCALE_FABLE_ALERT)
+
+    # ------------------------------------------------- share calibration
+    # Anchor case: the 2026-07-30 measurement. Both official numbers were read at
+    # the SAME instant (84% of Fable's cap, with 92% of the total quota spent) and
+    # confronted with the raw share the cache held at that hour.
+    measured_share = 0.5132557883430428
+
+    def pct_with(factor, share=measured_share, all_pct=92.0):
+        """What the bar would show for Fable with a given calibration factor."""
+        return share * factor * all_pct / (FABLE_CAP_SHARE * 100) * 100
+
+    check("factor of the first measurement",
+          round(calibration_factor(measured_share, 92.0, 84.0), 3), 0.889)
+    # 2nd point, taken hours later with the official numbers at another level. It
+    # is what turns the calibration into a supported hypothesis: two independent
+    # factors landing 0.01 from each other.
+    check("factor of the second measurement",
+          round(calibration_factor(0.5088, 94.0, 86.0), 3), 0.899)
+    check("uncalibrated the bar was inflating", round(pct_with(1.0), 1), 94.4)
+    # Round-trip: the computed factor, REAPPLIED, must reproduce the official
+    # number. That is what proves the formula's inversion - checking only the
+    # factor's value would be running the same arithmetic twice and calling it a
+    # test.
+    check("the computed factor reproduces the official",
+          round(pct_with(calibration_factor(measured_share, 92.0, 84.0)), 1), 84.0)
+    # With TWO measurements the factor in use (their average) matches neither one
+    # exactly - it sits between them. The 1-point tolerance is the order of the
+    # uncertainty in the official numbers themselves, which the screen serves
+    # rounded to integers. Tightening it to 0.1 would demand that the average
+    # reproduce each point dead on, which only happens if both points are
+    # identical - the test would end up forbidding the average.
+    check("the factor in use lands near the first measurement",
+          abs(pct_with(FABLE_SHARE_CALIBRATION) - 84.0) < 1.0, True)
+    check("the factor in use lands near the second measurement",
+          abs(pct_with(FABLE_SHARE_CALIBRATION, share=0.5088, all_pct=94.0) - 86.0) < 1.0,
+          True)
+    # A different pair, to make sure the formula was not fitted to the single case
+    # that motivated it.
+    check("the formula holds for another pair",
+          round(pct_with(calibration_factor(measured_share, 50.0, 30.0), all_pct=50.0), 1), 30.0)
+    nan, inf = float("nan"), float("inf")
+    for name, bad_share, bad_all, bad_fable in (
+        ("a zero share", 0.0, 92.0, 84.0),
+        ("a zero quota", 0.5, 0.0, 84.0),
+        ("a negative share", -0.1, 92.0, 84.0),
+        ("a share above 1", 1.5, 92.0, 84.0),
+        ("a negative fable", 0.5, 92.0, -1.0),
+        # NaN slips past ANY range check, because every comparison against it is
+        # false: only a finiteness filter BEFORE the `if`s catches it. Without
+        # that, the command would hand back a NaN factor, which would erase both
+        # Fable fields from the bar without explaining why.
+        ("a NaN share", nan, 92.0, 84.0),
+        ("a NaN quota", 0.5, nan, 84.0),
+        ("a NaN fable", 0.5, 92.0, nan),
+        ("an infinite quota", 0.5, inf, 84.0),
+        ("an infinite fable", 0.5, 92.0, inf),
+        ("a boolean share", True, 92.0, 84.0),
+        ("a fable as text", 0.5, 92.0, "84"),
+    ):
+        try:
+            calibration_factor(bad_share, bad_all, bad_fable)
+            outcome = "no error"
+        except ValueError:
+            outcome = "ValueError"
+        check(f"{name} does not calibrate", outcome, "ValueError")
+
+    # Cache freshness for calibrating: the guard that keeps the factor from
+    # crossing two periods. Fixed numbers, independent of the test's clock.
+    today_t = day_start()
+    now_t = today_t + 12 * 3600
+    good_start = now_t - 3 * 86400
+    check("a cache from this week and day works",
+          cache_is_calibratable(good_start, today_t, now_t - 60, now_t), "")
+    check("a cache from last week does not",
+          cache_is_calibratable(now_t - SEVEN_DAYS - 60, today_t, now_t - 60, now_t) != "", True)
+    check("a cache starting in the future does not",
+          cache_is_calibratable(now_t + 600, today_t, now_t - 60, now_t) != "", True)
+    check("a cache from another day does not",
+          cache_is_calibratable(good_start, today_t - 86400, now_t - 60, now_t) != "", True)
+    check("a cache expired by 1x the TTL still works",
+          cache_is_calibratable(good_start, today_t, now_t - WEEK_CACHE_TTL - 30, now_t), "")
+    check("a cache past 2x the TTL does not",
+          cache_is_calibratable(good_start, today_t, now_t - 2 * WEEK_CACHE_TTL - 1, now_t) != "",
+          True)
+    check("a cache written in the future does not",
+          cache_is_calibratable(good_start, today_t, now_t + 60, now_t) != "", True)
 
     # ------------------------------------------ reading and summing transcripts
     # Up to here nothing exercised the reverse reader, the deduplication or the
@@ -1872,7 +2174,30 @@ def selftest() -> int:
         patch_shares(0.0, 0.0, share_day_all)
         return daily_total_percent(fable_payload(weekly, days))
 
+    real_calibration = FABLE_SHARE_CALIBRATION
     try:
+        # BOTH Fable fields, not just the weekly one: with the factor applied to
+        # only one of them the bar would show a calibrated number next to a raw
+        # one, and checking the weekly alone still passed (a mutant that escaped
+        # on the first round).
+        raw_weekly, raw_daily = 40.0, 200.0  # this fixture, uncalibrated
+        check(
+            "the calibration reaches fable's weekly cap",
+            round(caps(0.50, 0.50, 40.0)[0], 3),
+            round(raw_weekly * real_calibration, 3),
+        )
+        check(
+            "the calibration reaches fable's daily cap",
+            round(caps(0.50, 0.50, 40.0)[1], 3),
+            round(raw_daily * real_calibration, 3),
+        )
+        # From here down, factor 1.0. The checks below are about the MECHANICS of
+        # the rationing (balance at the start of the day, days left, cap): an
+        # empirical factor in the middle would make the arithmetic in the comments
+        # impossible to verify by eye, and would make every re-calibration break a
+        # test that is not about calibration at all.
+        globals()["FABLE_SHARE_CALIBRATION"] = 1.0
+
         # 0.50 * 40 = 20 points out of 50 -> 40% of the weekly cap.
         # Nothing spent before today: balance 50 / 5 days = cap 10; spent today 20 -> 200%.
         week, day = caps(0.50, 0.50, 40.0)
@@ -1952,8 +2277,41 @@ def selftest() -> int:
             }
         )
         check("without both there is no loose ·", f"{paint('·', C_SEP_ITEM)}  {paint('·', C_SEP_ITEM)}" in only_total, False)
+
+        # The weekly block: the SAME order as the day block - Fable on the left,
+        # total quota on the right. Distinct shares on purpose: with both fields
+        # landing on the same number (the `day_line` case above, 40.0% on both)
+        # `index` would find the same occurrence twice and the check would pass
+        # with either order. Here 0.25 x 40 = 10 points out of 50 -> 20.0% of
+        # Fable's cap, against the 40.0% of the total quota.
+        patch_shares(0.25, 0.0, 0.0)
+        week_line = render(
+            {
+                "rate_limits": {
+                    "seven_day": {
+                        "used_percentage": 40.0,
+                        "resets_at": day_start() + 5 * 86400,
+                    }
+                }
+            }
+        ).split("\n")[-1]
+        check("fable's weekly cap on line 2", "20.0%" in week_line, True)
+        check("the weekly total quota on line 2", "40.0%" in week_line, True)
+        check(
+            "the weekly total sits to the RIGHT of fable's cap",
+            week_line.index("20.0%") < week_line.index("40.0%"),
+            True,
+        )
     finally:
         globals()["cost_shares"] = real_shares
+        globals()["FABLE_SHARE_CALIBRATION"] = real_calibration
+    # The block above runs with the calibration neutralized; if the `finally`
+    # stopped restoring the real value, every check AFTER it would measure with a
+    # factor of 1.0 and nothing would flag it. A fixture leak does not show up as
+    # an error - only as a test that agrees with its own patch (a mutant that
+    # escaped on the first round).
+    check("the calibration returns to its real value on leaving the block",
+          FABLE_SHARE_CALIBRATION, real_calibration)
     check("local midnight", datetime.fromtimestamp(day_start()).hour, 0)
 
     accented = '{"session_name": "implementação"}'.encode("utf-8")
@@ -2008,6 +2366,8 @@ def main() -> int:
     argv = sys.argv[1:]
     if "--selftest" in argv:
         return selftest()
+    if "--calibrate" in argv:
+        return calibrate_command(argv[argv.index("--calibrate") + 1:])
 
     try:
         raw = sys.stdin.buffer.read()

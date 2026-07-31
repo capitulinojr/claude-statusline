@@ -4,14 +4,19 @@ Read this in [English](README.md).
 
 ```
 Opus 5 (1M context)  medium  |  Tuning the status line  ·  11.0%  2.9M
-------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  32.0%  37.1%  4d 14h -------
+------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  37.1%  32.0%  4d 14h -------
 ```
 
-A linha de cima é esta sessão. A de baixo é a cota da tua conta. Tem uma terceira linha, com um espaço só, pra barra não encostar no prompt logo abaixo.
+```
+<modelo> <esforco> | <sessao(italico)> · <ctx%> <tokens-sessao>
+<5h%> · <reset-5h> | <fable-dia%> · <dia-total%> | <fable%> <semana%> <reset-semanal>
+```
+
+A linha de cima é esta sessão. A de baixo é a cota da conta. Tem uma terceira linha, com um espaço só, pra barra não encostar no prompt logo abaixo.
 
 Nenhuma das duas tem rótulo. Posição e cor já dizem o que é. Tu lê de relance: em que modelo eu estou, quanto de contexto sobra, quanto de cota eu queimei.
 
-Um arquivo, stdlib, zero dependências. Ele lê JSON do stdin e imprime duas linhas. É essa a arquitetura inteira.
+Um arquivo, stdlib, zero dependências. Ele lê JSON do stdin e imprime duas linhas. Só.
 
 ---
 
@@ -20,7 +25,6 @@ Um arquivo, stdlib, zero dependências. Ele lê JSON do stdin e imprime duas lin
 **Requisitos:** Python 3.8+ no PATH. Mais nada.
 
 1. Salva o `statusline.py` onde tu quiser (ex.: `~/.claude/statusline.py`).
-
 2. No `~/.claude/settings.json`, põe:
 
 ```json
@@ -44,13 +48,19 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 
 **Linha 1 - a sessão**
 
-| Campo | O que é |
-| --- | --- |
-| `Opus 5 (1M context)` | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul) |
-| `medium` | nível de reasoning effort (`low` … `max`) |
+Relembrando:
+```
+Opus 5 (1M context)  medium  |  Tuning the status line  ·  11.0%  2.9M
+------- 4.0%  ·  4h 47m  |  48.5%  ·  21.0%  |  37.1%  32.0%  4d 14h -------
+```
+
+| Campo                    | O que é                                                                                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Opus 5 (1M context)`    | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul)                                                                                           |
+| `medium`                 | nível de reasoning effort (`low` … `max`)                                                                                                                                                 |
 | `Tuning the status line` | nome da sessão, em itálico - o que tu pôs no `/rename`, ou o título que o Claude Code gerou. O script tira os caracteres de controle e trunca o texto antes de ele chegar no teu terminal |
-| `11.0%` | **contexto** - % da janela inteira já ocupada. Passou de 75%, fica vermelho e o aviso `/compact` aparece do lado |
-| `2.9M` | tokens acumulados nesta sessão (input + output + cache) |
+| `11.0%`                  | **contexto** - % da janela inteira já ocupada. Passou de 75%, fica vermelho e o aviso `/compact` aparece do lado                                                                          |
+| `2.9M`                   | tokens acumulados nesta sessão (input + output + cache)                                                                                                                                   |
 
 **Linha 2 - as cotas**
 
@@ -60,11 +70,11 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 | `4h 47m` | tempo até o reset das 5 horas |
 | `48.5%` | **teto diário do modelo caro** (ver abaixo) |
 | `21.0%` | **teto diário da cota total** - mesmo racionamento, todos os modelos |
-| `32.0%` | cota da janela **semanal** |
 | `37.1%` | quanto do teto do Fable (metade da cota semanal) já foi |
+| `32.0%` | cota da janela **semanal** |
 | `4d 14h` | tempo até o reset semanal |
 
-O bloco do meio tem **dois** números, nesta ordem: teto diário do Fable · teto diário total. Campo sem dado por trás some da barra, então o número de campos varia. A posição é sempre relativa aos separadores `|`, nunca fixa.
+Os dois últimos blocos têm um número do Fable e um do total cada, e os dois usam a **mesma ordem**: `Fable · total` no dia, `Fable total` na semana. Mesma coluna, mesmo significado - tu não inverte o olho no meio da linha. Campo sem dado por trás some da barra, então o número de campos varia. A posição é sempre relativa aos separadores `|`, nunca fixa.
 
 ### A cor não é o valor, é o ritmo
 
@@ -101,6 +111,7 @@ O **teto** aqui é oficial. O que o script estima é quanto dele tu já gastou.
 
 ```
 fable_share  = fable_cost / total_cost              (sobre os 7 dias)
+fable_share  = fable_share × 0.894                  (calibração medida, ver abaixo)
 pontos_gastos_pelo_fable = fable_share × seven_day.used_percentage
 % do teto = pontos ÷ 50 × 100                       (FABLE_CAP_SHARE = 50%)
 ```
@@ -108,6 +119,60 @@ pontos_gastos_pelo_fable = fable_share × seven_day.used_percentage
 `FABLE_CAP_SHARE = 0.50` é o **limite declarado pela Anthropic** (conferido em 2026-07-29), não é chute: nos planos Max e Team Premium, o Fable 5 pode consumir *até metade* da tua cota semanal. Passou disso, ou tu segue no Fable com usage credits, ou troca de modelo pra ficar dentro do que sobrou. Daí a régua: 100% neste campo é o ponto em que o Fable deixa de estar incluído na assinatura. Termo de plano muda - confere a página do teu plano antes de confiar nessa constante.
 
 (Se o teu plano tem outros termos - Enterprise por assento, por exemplo, onde o Fable é só por crédito - ajusta a constante no topo do arquivo.)
+
+### A estimativa é calibrada contra o número oficial
+
+O preço de API **não** é o peso da cota, e a diferença é grande o bastante pra pintar a barra da cor errada. Medindo os dois lados no mesmo instante em **2026-07-30**:
+
+| | fatia do Fable na semana | % do teto exibido |
+| --- | --- | --- |
+| estimativa crua | 51,3% | **94,4%** |
+| oficial | ~45,7% | **84%** |
+
+Dez pontos de diferença, sempre pra cima - a barra alarmava antes da hora. Daí a constante `FABLE_FATIA_CALIBRACAO`.
+
+**Duas medições, não uma.** A segunda foi colhida horas depois, com os oficiais já em outro patamar:
+
+| quando | fatia crua | oficial | fator |
+| --- | --- | --- | --- |
+| 30/07 manhã | 51,33% | 84% de 92% | 0,889 |
+| 30/07 tarde | 50,88% | 86% de 94% | 0,899 |
+
+Dois pontos independentes caindo a 0,01 um do outro - é isso que sustenta a hipótese do fator estável; com um ponto só não dava pra distinguir viés sistemático de coincidência do dia. Cada ponto carrega ~±0,01 de incerteza só pelo **arredondamento** dos oficiais (a tela entrega inteiros: "84%" é qualquer coisa entre 83,5 e 84,5), então a diferença entre os dois está dentro do ruído. O valor em uso é a **média: 0,894**.
+
+**Onde está o número oficial:** o Claude Code não manda ele no payload (só `five_hour` e `seven_day`), mas o claude.ai mostra em **Settings > Usage**, e a API que alimenta aquela tela (`GET /api/organizations/<org>/usage`) devolve os três limites no array `limits` - a entrada `weekly_all` é a cota total e a `weekly_scoped` com `scope.model.display_name: "Fable"` é o teto do modelo caro.
+
+**Duas causas podem estar por trás, e uma medição só não separa as duas:**
+
+1. o peso do Fable na cota ser menor que a razão de preço (hoje 2× o Opus);
+2. consumo que conta na cota mas não deixa transcript local - claude.ai web, Cowork.
+
+A causa 2 **não tem sentido de viés garantido**: o consumo ausente só infla a fatia se for *menos* rico em Fable que o local; sendo mais rico, a fatia local subestima; e com a mesma mistura, não enviesa nada. As duas são absorvíveis pelo mesmo fator multiplicativo enquanto as proporções ficarem estáveis, mas não apontam necessariamente pro mesmo lado.
+
+Por isso o fator é aplicado à **fatia** e não ao preço: assim ele não afirma qual das duas causas é.
+
+### O teto diário do Fable amplifica o erro
+
+O campo **semanal** responde de forma proporcional ao fator. O **diário**, não - e isso não é efeito da calibração, é a forma do racionamento. O teto do dia divide o **saldo** (`50 − o que o Fable gastou antes de hoje`), e perto do teto esse saldo é a diferença entre dois números quase iguais:
+
+| fator | fatia | semanal | diário |
+| --- | --- | --- | --- |
+| 1,000 (cru) | 50,8% | 93,4% | **89,2%** |
+| 0,920 | 46,7% | 86,0% | 51,4% |
+| **0,894** (em uso) | 45,4% | **83,5%** | **44,6%** |
+| 0,800 | 40,6% | 74,7% | 28,7% |
+
+Medido com a semana em 92% e **dois dias até o reset** - o número de dias entra no cálculo do teto, então faz parte da medição. Um ponto de erro na fatia move o semanal ~1,8 ponto e o diário dezenas. **Lê o diário como ordem de grandeza, não como medida.** Deixar ele cru ao lado de um semanal calibrado seria pior - misturaria duas réguas na mesma barra.
+
+> **A calibração vale para a ponderação que a Anthropic praticava em 2026-07-30.** Não é constante da natureza - eles podem re-ponderar a cota quando quiserem, e no dia em que fizerem isso o fator fica errado sem nada acusar. Nada no script detecta esse envelhecimento; só re-medir detecta.
+
+**Re-medir** é ler os dois números na tela de usage, no mesmo instante, e rodar:
+
+```bash
+python statusline.py --calibrar 92 84    # <all%> <fable%>
+```
+
+Ele compara com a fatia crua desta máquina e imprime o `FABLE_FATIA_CALIBRACAO` que faz bater. Fator `1.0` desliga a correção e devolve o comportamento antigo.
 
 ### O teto diário se mexe
 
@@ -155,6 +220,7 @@ Tudo que tu ia querer mudar mora nas constantes do topo, cada uma com um coment�
 - `SCAN_DEADLINE` (8 s) - orçamento de tempo da varredura dos transcripts. Passou disso, a estimativa da rodada é descartada e vale o último cache, mesmo velho.
 - `PRICES` - USD por 1M tokens, casados pelo prefixo do id do modelo. **Confere as tabelas de preço antes de confiar no número** (as do arquivo foram verificadas em julho de 2026); o casamento é por prefixo, então a ordem das entradas importa.
 - `FABLE_CAP_SHARE` - a fatia da cota semanal que o Fable pode ocupar (0.50 = o limite oficial no Max/Team Premium).
+- `FABLE_FATIA_CALIBRACAO` - correção empírica da fatia estimada do Fable, média de duas medições contra o número oficial em 2026-07-30 (0.894). Re-medir com `--calibrar`; `1.0` desliga.
 - `CTX_HINT` - o texto que aparece quando o contexto passa de 75%.
 - `QUOTA_DASHES` - o risquinho que abre e fecha a segunda linha.
 
@@ -196,7 +262,8 @@ Vem **desligado** de propósito: o payload carrega o nome da tua sessão e camin
 ## Testes
 
 ```bash
-python statusline.py --selftest     # ~200 checks internos, 0 dependências
+python statusline.py --selftest     # ~210 checks internos, 0 dependências
+python statusline.py --calibrar 92 84   # re-mede o fator do Fable: <all%> <fable%>
 ```
 
 Cobrem formatação de duração e de token, os termômetros, inferência da janela de contexto, a aritmética dos dois tetos (semana limpa, dia anterior estourado, véspera do reset, saldo zerado), decodificação do payload e a montagem das duas linhas. E mais, com arquivo temporário de verdade: o leitor reverso, a deduplicação de streaming, a janela de tempo, o custo ponderado e o cache em disco.
