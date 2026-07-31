@@ -379,6 +379,15 @@ The script samples the clock several times per render (`time.time()`,
 `day_start()`). A render that crosses midnight can mix one day's share with the
 other's cost. One crooked bar per day, until the next refresh.
 
+An entry dated ahead of the clock counts as today's. That is a choice, not an
+oversight: refusing them was tried and it read worse. A refused entry still
+counts in the week's total while leaving the day's, so a machine running a few
+minutes fast - or transcripts synced from one - pushed both daily fields toward a
+measured `0.0%` next to a weekly quota of 68%. Counting them overstates the daily
+cap, which is the loud, conservative error. Refusing them understates it, which
+is the quiet one, and on a gauge the quiet error is the one that lets you blow
+through the limit thinking you're fine.
+
 `SCAN_DEADLINE` is checked between files, not inside one. A single very large
 `.jsonl` is read to the end before the budget is looked at again, so the 8
 seconds are a target, not a ceiling. And when the budget does blow with no cache
@@ -473,9 +482,10 @@ python statusline.py --selftest     # internal checks, 0 dependencies
 python statusline.py --calibrate 92 84   # re-measure Fable's factor: <all%> <fable%>
 ```
 
-It prints how many checks ran: `OK - selftest (250 checks, 0 failure(s))`. The
+It prints how many checks ran: `OK - selftest (251 checks, 0 failure(s))`. The
 count is there because `0 failure(s)` alone would read exactly the same if the
-whole battery had been deleted.
+whole battery had been deleted. On Windows it reads one lower: the file-mode
+check only means something where POSIX permissions do.
 
 It covers duration and token formatting, the thermometers, context window
 inference, the arithmetic of both caps (clean week, blown previous day, reset

@@ -239,6 +239,8 @@ A projeção é linear e o uso humano vem em rajada, então ela lê pessimista d
 
 O script lê o relógio várias vezes por render (`time.time()`, `day_start()`). Um render que atravessa a meia-noite pode misturar a fatia de um dia com o custo do outro. Uma barra torta por dia, até o refresh seguinte.
 
+Entrada datada à frente do relógio conta como de hoje. Isso é escolha, não descuido: recusar foi testado e ficou pior. Entrada recusada continua contando no total da semana e sai só do total do dia, então uma máquina alguns minutos adiantada - ou transcrito sincronizado de uma - empurrava os dois campos do dia pra um `0.0%` medido ao lado de uma cota semanal em 68%. Contar superestima o teto do dia, que é o erro barulhento e conservador. Recusar subestima, que é o silencioso - e num medidor o erro silencioso é o que deixa a pessoa estourar o limite achando que está tranquila.
+
 O `SCAN_DEADLINE` é conferido **entre** arquivos, não dentro de um. Um `.jsonl` muito grande é lido até o fim antes de o orçamento ser olhado de novo, então os 8 segundos são alvo, não teto. E quando o orçamento estoura sem cache pra cair, o trabalho parcial é descartado em vez de salvo: os três campos derivados não aparecem e o render seguinte recomeça do zero. Histórico suficiente num disco lento o bastante e isso vira o estado estável - a barra segue funcionando, só que os três campos do Fable e do dia nunca aparecem. Se for o teu caso, a saída é a mesma da seção acima: fazer `fable_cap_percent()` e `daily_total_percent()` devolverem `None`, e a varredura para de rodar.
 
 O que ele garante: nunca derruba a sessão. Cada pedaço da barra roda dentro de um `safe()`, e o que falha vira string vazia e some sem deixar buraco. Payload vazio ou inválido imprime linha em branco, não stack trace.
@@ -273,7 +275,7 @@ python statusline.py --selftest     # checks internos, 0 dependências
 python statusline.py --calibrate 92 84   # re-mede o fator do Fable: <all%> <fable%>
 ```
 
-Ele imprime quantos checks rodaram: `OK - selftest (250 checks, 0 falha(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada.
+Ele imprime quantos checks rodaram: `OK - selftest (251 checks, 0 falha(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada. No Windows sai um a menos: o check de modo de arquivo só quer dizer alguma coisa onde existe permissão POSIX.
 
 Cobrem formatação de duração e de token, os termômetros, inferência da janela de contexto, a aritmética dos dois tetos (semana limpa, dia anterior estourado, véspera do reset, saldo zerado), decodificação do payload e a montagem das duas linhas. E mais, com arquivo temporário de verdade: o leitor reverso, a deduplicação de streaming, a janela de tempo, o custo ponderado e o cache em disco.
 

@@ -388,7 +388,7 @@ _CONTROL = re.compile(
     r"["
     r"\x00-\x1f\x7f-\x9f"           # C0, DEL and C1 (CSI/OSC/DCS in 8 bits)
     r"\xad"                             # soft hyphen: invisible, splits a word
-    r"\u061c\u200b-\u200f"           # ALM, zero-width, and the LRM/RLM marks
+    r"\u061c\u200b\u200e\u200f"           # ALM, zero-width, and the LRM/RLM marks
     r"\u2028\u2029"                   # line and paragraph separators
     r"\u202a-\u202e\u2066-\u2069"  # bidi overrides/isolates: "Trojan Source"
     r"\u2060-\u2064\ufeff"           # word joiner, invisible operators, ZWNBSP
@@ -1043,7 +1043,15 @@ def cost_shares(start: float) -> Shares | None:
             # cap, inflating it with spending that never happened today. The
             # slack matches RESET_TOLERANCE: seconds of clock skew are normal,
             # days are not.
-            is_today = ts is not None and today <= ts <= time.time() + RESET_TOLERANCE
+            # No upper bound, deliberately. Refusing entries dated ahead of the
+            # clock was tried and reverted: it kept them in the denominator while
+            # dropping them from the numerator, so a machine running a few minutes
+            # fast - or transcripts synced from one - drove both daily fields to a
+            # measured 0.0% beside a weekly quota at 68%. Counting a future-dated
+            # entry as today's overstates the daily cap, which is the loud,
+            # conservative error; refusing it understates, which is the quiet one
+            # that makes someone blow through the cap. Prefer the loud one.
+            is_today = ts is not None and ts >= today
             if is_today:
                 totals["all_day"] += cost
             model = as_text(entry["message"].get("model")).lower()
@@ -1982,12 +1990,9 @@ def selftest() -> int:
                 accumulate(entries or [])
                 return complete
 
-            # Noon today, or now if noon has not come yet. On a machine whose
-            # local clock is still in the morning - every runner east of UTC -
-            # a noon timestamp is in the FUTURE, and future-dated entries are
-            # deliberately not counted as today's. The fixture has to be an
-            # instant that already happened, or it tests the guard instead of
-            # the arithmetic.
+            # Noon today, or now if noon has not come yet: a fixture standing for
+            # "spent today" should be an instant that already happened, and on any
+            # machine still in the morning a plain noon is in the future.
             now = datetime.now()
             today_iso = min(now.replace(hour=12), now).isoformat()
             populated = [
@@ -2428,16 +2433,23 @@ def main() -> int:
     # CLAUDE_STATUSLINE_DEBUG on: the payload carries the session name and paths,
     # and writing that to disk on every refresh is the user's decision, not a
     # default. Fails silently.
-    # Read as a switch, not for truthiness: `CLAUDE_STATUSLINE_DEBUG=0` is how
-    # a person turns something off, and the bare `os.environ.get(...)` took the
-    # string "0" as true and wrote the dump anyway - the opposite of what was
-    # asked, with personal data as the payment.
-    if os.environ.get(DEBUG_ENV, "").strip().lower() not in ("", "0", "false", "no", "off"):
+    # An allow-list, not a deny-list. The bare `os.environ.get(...)` took the
+    # string "0" as true and wrote the dump on the very command meant to stop
+    # it; a deny-list fixed that direction but still opened on anything it did
+    # not recognise - `=nao`, `=disabled`, a typo. What this switch turns on is
+    # a file holding the session name and paths from the disk, rewritten every
+    # refresh, so the unrecognised value has to mean OFF.
+    if os.environ.get(DEBUG_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
         try:
             write_private(
                 state_file(DEBUG_DUMP), json.dumps(data, indent=2, ensure_ascii=False)
             )
-        except OSError:
+        # Not just OSError. With `indent`, json uses the pure-Python encoder,
+        # which recurses far deeper per level than the C scanner in `loads` -
+        # so there is a band of nesting that survives being parsed and blows up
+        # being written back out. Diagnostics must never be the thing that
+        # takes the bar down.
+        except Exception:
             pass
 
     try:
