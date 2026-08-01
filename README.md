@@ -417,9 +417,8 @@ line instead of a stack trace.
   that would have turned into a false "quota full" alert.
 - **An implausible deadline is a missing deadline.** A `resets_at` in the past,
   zeroed, or 99 days out isn't a bad deadline, it's invalid data. Building a
-  window on top of it manufactures a number that looks measured: the daily cap
-  used to be born at a red 100% purely because the payload carried no reset and
-  the code guessed "7 days left".
+  window on top of it manufactures a number that looks measured: a daily cap built on a
+  guessed "7 days left" is born at a red 100% that measures nothing.
 - **The same goes for transcripts.** They are another program's files, not a
   contract. Token counters arrive as strings, negatives or `NaN` just as easily,
   so the script sanitizes each one before it enters a sum. A single `NaN` would

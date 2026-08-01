@@ -55,7 +55,7 @@ Usage:  python statusline.py            (reads the payload from stdin)
 Any failure prints whatever was already assembled - the status line never takes
 the session down.
 
-Known limits (adversarial review 2026-07-29, what was left out):
+Known limits, deliberately left in:
   - Fable's calibration rests on ONE measurement (2026-07-30) and does not
     separate the two possible causes of the bias - a quota weight lower than the
     price ratio, or usage with no local transcript (claude.ai web, Cowork). While
@@ -73,8 +73,7 @@ Known limits (adversarial review 2026-07-29, what was left out):
     So the daily
     field inherits the estimate's uncertainty AMPLIFIED - read it as an order of
     magnitude, not as a measurement. Leaving the daily RAW next to a calibrated
-    weekly would be worse (the 2026-07-30 adversarial review preferred calibrating
-    both to mixing two rulers).
+    weekly would be worse: it would put two different rulers on the same bar.
   - The projection is LINEAR and human usage comes in bursts, so it is
     pessimistic in the morning and optimistic in the small hours. The floors
     (PACE_FLOOR_*) only cut the numeric blow-up at the start of the window;
@@ -223,8 +222,8 @@ FABLE_PREFIXES = ("claude-fable",)
 # Opus); (b) usage that counts against the quota but leaves no local transcript
 # (claude.ai web, Cowork).
 #
-# Cause (b) has NO guaranteed direction, and saying it "inflates the share" was
-# too strong (corrected in the 2026-07-30 adversarial review): absent usage only
+# Cause (b) has NO guaranteed direction, and saying it "inflates the share" would be
+# too strong: absent usage only
 # inflates if it is LESS Fable-heavy than the local one; being more Fable-heavy,
 # the local share understates; and with the same mix, it biases nothing. Both are
 # absorbable by the same empirical factor while the proportions stay stable, but
@@ -1244,8 +1243,7 @@ def calibration_factor(raw_share: float, all_percent: float, fable_percent: floa
     same reason the rest of the file does it: NaN slips past range checks, because
     every comparison against it is false. A `nan` typed into the command would
     walk through the `if`s untouched and come out as a NaN factor, which would
-    then erase both Fable fields from the bar without saying why (finding from the
-    2026-07-30 adversarial review).
+    then erase both Fable fields from the bar without saying why.
     """
     values = [finite_number(v) for v in (raw_share, all_percent, fable_percent)]
     if any(v is None for v in values):
