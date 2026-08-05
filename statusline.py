@@ -235,20 +235,38 @@ FABLE_PREFIXES = ("claude-fable",)
 # Re-measure with `--calibrate <all%> <fable%>`, reading both numbers off the
 # usage screen, and paste the result here. 1.0 = no correction (the old behavior).
 #
-# MEASUREMENTS so far - the value in use is their average:
+# MEASUREMENTS so far:
 #
 #   2026-07-30 morning   raw share 51.33%   official 84% of 92%   ->  0.889
 #   2026-07-30 afternoon raw share 50.88%   official 86% of 94%   ->  0.899
+#   2026-07-31           raw share 38.35%   official  5% of  7%   ->  0.931  (noisy)
+#   2026-08-05           raw share 47.36%   official 60% of 68%   ->  0.931  <- IN USE
 #
-# Two independent points, taken hours apart and with the official numbers already
-# at another level, landing 0.01 from each other: that is what supports the
-# stable-factor hypothesis - with a single point there was no way to tell
-# "systematic bias" from "coincidence of that day". Each point carries ~±0.01 of
-# uncertainty from the ROUNDING of the official numbers alone, which the screen
-# serves as integers ("84%" is anything between 83.5 and 84.5) - so the gap
-# between the two sits inside the noise, and there is no drift to chase. Hence the
-# average, rather than the most recent one.
-FABLE_SHARE_CALIBRATION = 0.894
+# Until 08-05 the value was 0.894, the average of the two 07-30 points, and this
+# note claimed there was "no drift to chase". There was. Propagating only the
+# ROUNDING of the official numbers - the screen serves integers, so "60%" is
+# anything between 59.5 and 60.5 - the two ranges do NOT touch:
+#
+#   07-30 morning   0.889  (0.879 - 0.900)
+#   08-05           0.931  (0.917 - 0.946)
+#
+# Two readings are possible and one measurement does not separate them: Anthropic
+# re-weighted the quota, or the usage MIX moved enough to shift the bias. Under
+# either, what counts is the CURRENT regime - which is why the value is now the
+# recent measurement and not the average with 07-30. Averaging across two regimes
+# produces a number that describes neither; while the points sat 0.01 apart the
+# average was right, and it stopped being right when they separated.
+#
+# The 07-31 point gained meaning in hindsight: it already pointed at 0.931 and was
+# dropped as noise (with official numbers of 5% and 7%, the same ±0.5 from the
+# screen becomes ±0.11 in the factor). The 08-05 measurement lands on the SAME
+# value with large official numbers, which corroborates it - two independent
+# points at 0.931, one of them precise.
+#
+# The ranges above propagate only the SCREEN's rounding. The raw share comes from
+# the local scan and carries its own, unmeasured uncertainty - so they are a floor
+# on the uncertainty, not the whole of it.
+FABLE_SHARE_CALIBRATION = 0.931
 # The weekly share moves slowly and the scan now covers the subagents too, so it
 # reads a lot more disk. 10 min keeps the cost near 1% of one core; below that
 # the scan gets heavy again without improving the reading.
@@ -1660,17 +1678,22 @@ def selftest() -> int:
     # test.
     check("the computed factor reproduces the official",
           round(pct_with(calibration_factor(measured_share, 92.0, 84.0)), 1), 84.0)
-    # With TWO measurements the factor in use (their average) matches neither one
-    # exactly - it sits between them. The 1-point tolerance is the order of the
-    # uncertainty in the official numbers themselves, which the screen serves
-    # rounded to integers. Tightening it to 0.1 would demand that the average
-    # reproduce each point dead on, which only happens if both points are
-    # identical - the test would end up forbidding the average.
-    check("the factor in use lands near the first measurement",
-          abs(pct_with(FABLE_SHARE_CALIBRATION) - 84.0) < 1.0, True)
-    check("the factor in use lands near the second measurement",
-          abs(pct_with(FABLE_SHARE_CALIBRATION, share=0.5088, all_pct=94.0) - 86.0) < 1.0,
+    # The factor IN USE has to reproduce the measurement that JUSTIFIES it - since
+    # 2026-08-05, that day's, no longer the 07-30 average (table at the top of the
+    # file). Without this check, swapping the factor without recording the new
+    # measurement would go unnoticed. The 1-point tolerance is the order of the
+    # uncertainty in the official numbers, which the screen serves rounded to
+    # integers.
+    check("the factor in use reproduces the measurement behind it",
+          abs(pct_with(FABLE_SHARE_CALIBRATION, share=0.4736, all_pct=68.0) - 60.0) < 1.0,
           True)
+    # And it no longer reproduces the 07-30 regime. This check is the pair of the
+    # one above: it is what records, executably, that there was a REGIME CHANGE and
+    # not a tweak - if some future factor serves both periods at once, the premise
+    # behind swapping the value (ranges that do not touch) has fallen, and that has
+    # to show up as a failure rather than as silence.
+    check("and no longer reproduces the old regime",
+          abs(pct_with(FABLE_SHARE_CALIBRATION) - 84.0) < 1.0, False)
     # A different pair, to make sure the formula was not fitted to the single case
     # that motivated it.
     check("the formula holds for another pair",
