@@ -1852,6 +1852,16 @@ def load_payload(raw: bytes) -> dict:
 
 
 def selftest() -> int:
+    """The battery, with the environment NEUTRALISED.\n\n    With `CLAUDE_STATUSLINE_USAGE_API` enabled on the machine running it, the\n    checks that render the bar would start reading the REAL official cache and\n    change value on their own - a battery that depends on the environment is no\n    battery. The variable is removed here and restored at the end; the block that\n    tests the feature itself enables it within its own scope.\n    """
+    original = os.environ.pop(USAGE_API_ENV, None)
+    try:
+        return _selftest_corpo()
+    finally:
+        if original is not None:
+            os.environ[USAGE_API_ENV] = original
+
+
+def _selftest_corpo() -> int:
     failures = []
     ran = 0
 
@@ -2237,36 +2247,42 @@ def selftest() -> int:
             check("an empty stamp does not count as claimed",
                   claim_attempt(turn, time.time()), True)
 
-            # The lock only shows up with REAL processes competing. Two calls in
+            # The lock only shows up with REAL processes competing: two calls in
             # sequence are stopped by the mtime alone, so a sequential test lets
-            # the removal of `flock` through - a mutant survived exactly that way.
-            # Here three children start together and exactly one may win. Skipped
-            # where there is no `fork` (Windows), the same platform where the
-            # lock does not exist either.
-            if hasattr(os, "fork"):
-                race = base / "race.stamp"
-                race.unlink(missing_ok=True)
-                start_at = time.time() + 0.3
-                pipes = []
-                for _ in range(3):
-                    read_fd, write_fd = os.pipe()
-                    if os.fork() == 0:  # child
-                        os.close(read_fd)
-                        while time.time() < start_at:
-                            pass
-                        won = claim_attempt(race, time.time())
-                        os.write(write_fd, b"1" if won else b"0")
-                        os._exit(0)
-                    os.close(write_fd)
-                    pipes.append(read_fd)
-                wins = 0
-                for read_fd in pipes:
-                    wins += os.read(read_fd, 1) == b"1"
+            # the removal of `flock` through.
+            #
+            # The proof is NOT a race. Starting N children together only catches
+            # the missing lock when the window between the `fstat` and the write
+            # - microseconds wide - happens to manifest; measured, the mutant
+            # survived a good share of the runs. A detector that only sometimes
+            # detects is not a detector.
+            #
+            # Here the PARENT holds the lock and the child tries to claim. With
+            # the lock, the child is denied by `LOCK_NB` and gives up; without
+            # it, the child sees a 0-byte stamp and claims. Deterministic both
+            # ways.
+            try:
+                import fcntl as _fcntl
+            except ImportError:
+                _fcntl = None
+            if _fcntl is not None and hasattr(os, "fork"):
+                contested = base / "contested.stamp"
+                contested.unlink(missing_ok=True)
+                parent_fd = os.open(contested, os.O_RDWR | os.O_CREAT, 0o600)
+                _fcntl.flock(parent_fd, _fcntl.LOCK_EX)
+                read_fd, write_fd = os.pipe()
+                if os.fork() == 0:  # child
                     os.close(read_fd)
-                for _ in pipes:
-                    os.wait()
-                check("on a simultaneous start, only one process wins the turn",
-                      wins, 1)
+                    took = claim_attempt(contested, time.time())
+                    os.write(write_fd, b"1" if took else b"0")
+                    os._exit(0)
+                os.close(write_fd)
+                answer = os.read(read_fd, 1)
+                os.close(read_fd)
+                os.wait()
+                _fcntl.flock(parent_fd, _fcntl.LOCK_UN)
+                os.close(parent_fd)
+                check("with the lock held, the other session gives up", answer, b"0")
 
             # -- integration: with a fresh official number the WEEKLY is a reading.
             # Without this check, deleting the official branch inside
