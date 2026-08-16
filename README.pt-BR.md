@@ -49,7 +49,7 @@ Ele conhece o formato do bloco e acha o `settings.json` sozinho. O pedido do dif
 
 No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pulam o `site-packages` e as variáveis de ambiente `PYTHON*`: inicia mais rápido, e um `PYTHONPATH` sujo não quebra ele.
 
-3. Confere: `python statusline.py --selftest` tem que imprimir `OK - selftest (0 failure(s))`.
+3. Confere: `python statusline.py --selftest` tem que imprimir `OK - selftest (308 checks, 0 failure(s))`.
 
 ---
 
@@ -125,7 +125,7 @@ Se tu orquestra com Fable e executa com Sonnet/Haiku, o número agregado não te
 
 ```
 fable_share  = fable_cost / total_cost              (sobre os 7 dias)
-fable_share  = fable_share × 0.894                  (calibração medida, ver abaixo)
+fable_share  = fable_share × 1.382                  (calibração medida, ver abaixo)
 pontos_gastos_pelo_fable = fable_share × seven_day.used_percentage
 % do teto = pontos ÷ 50 × 100                       (FABLE_CAP_SHARE = 50%)
 ```
@@ -136,16 +136,11 @@ pontos_gastos_pelo_fable = fable_share × seven_day.used_percentage
 
 Preço de API não é peso de cota. A fatia crua sai alta o bastante pra pintar a barra da cor errada, então ela é multiplicada por `FABLE_SHARE_CALIBRATION` antes de virar porcentagem do teto.
 
-**O valor em uso é 0,894**, média de duas medições contra o número oficial:
+O valor que vai em `FABLE_SHARE_CALIBRATION` é **1,382**, de uma medição de fatia crua de 24,66% contra um oficial de 15% sobre 22% da cota. É um ponto empírico, não constante da natureza, e carrega margem de ~±0,08 só de arredondamento: a tela de usage serve inteiros, então "15%" é qualquer valor entre 14,5 e 15,5. A fatia crua soma a incerteza própria dela por cima.
 
-| medição | fatia crua | oficial | fator |
-| --- | --- | --- | --- |
-| 30/07/2026, manhã | 51,33% | 84% de 92% | 0,889 |
-| 30/07/2026, tarde | 50,88% | 86% de 94% | 0,899 |
+Fator acima de 1 quer dizer que a fatia local **subestima** o Fable; abaixo de 1, superestima. A direção depende de quanto Fable roda fora desta máquina - claude.ai web, Cowork, outro device. Esse consumo conta na cota e não deixa transcript local, e a própria tela de usage avisa: o detalhamento dela é "based on local sessions on this machine", enquanto o teto no topo vem do servidor e enxerga tudo. Essa proporção não é fixa, então o fator também não é. Re-medir com regularidade, ou ligar a leitura oficial abaixo e deixar ele se re-medir sozinho.
 
-A margem de cada uma é ~±0,01, e vem toda do arredondamento: a tela de usage serve inteiros, então "84%" é qualquer valor entre 83,5 e 84,5. Os dois fatores caem dentro dessa margem um do outro.
-
-Sem a correção, a barra lê cerca de dez pontos acima do oficial - na medição da manhã, 94,4% do teto contra os 84% reais. O desvio é sempre pra cima, então a barra alarma cedo.
+Medir com a semana adiantada sempre que der: oficial grande estreita a margem, e fator medido contra porcentagem de um dígito é quase só ruído de arredondamento.
 
 **O que o fator absorve.** Duas causas, que uma medição não separa:
 
@@ -154,7 +149,43 @@ Sem a correção, a barra lê cerca de dez pontos acima do oficial - na mediçã
 
 A segunda não tem direção garantida. Consumo ausente só infla a fatia se for *menos* rico em Fable que o local; sendo mais rico, a fatia local subestima; e com a mesma mistura, não enviesa nada. O mesmo fator absorve as duas enquanto as proporções ficarem estáveis, mas elas não apontam necessariamente pro mesmo lado. Daí a correção morar na **fatia**, e não no preço: assim ela não afirma qual das duas é.
 
-**Onde está o número oficial:** o Claude Code não manda ele no payload (só `five_hour` e `seven_day`), mas o claude.ai mostra em **Settings > Usage**, e a API que alimenta aquela tela (`GET /api/organizations/<org>/usage`) devolve os três limites no array `limits` - a entrada `weekly_all` é a cota total e a `weekly_scoped` com `scope.model.display_name: "Fable"` é o teto do Fable.
+**Onde está o número oficial:** o Claude Code não manda ele no payload (só `five_hour` e `seven_day`), mas o claude.ai mostra em **Settings > Usage**, e a API que alimenta aquela tela devolve os três limites num array `limits` - a entrada `weekly_all` é a cota total e a `weekly_scoped` com `scope.model.display_name: "Fable"` é o teto do Fable. A seção seguinte lê exatamente isso.
+
+### Lendo o número oficial (opt-in)
+
+O `claude_usage_fetch.py` vem junto com a statusline. Ele lê tua credencial OAuth do Keychain, busca `GET /api/oauth/usage` - o mesmo endpoint que o Claude Code usa no painel `/usage` dele - e guarda o resultado em cache. A barra então **exibe** o número oficial semanal do Fable em vez de estimar.
+
+**Vem desligado.** Liga com:
+
+```bash
+export CLAUDE_STATUSLINE_USAGE_API=1
+```
+
+Com a variável desligada, o `claude_usage_fetch.py` nunca é chamado: nada é lido do teu Keychain e nada sai da máquina. Uma statusline não deve encostar nas tuas credenciais só porque consegue.
+
+Com ela ligada:
+
+- **O campo semanal do Fable vira leitura**, não estimativa: a porcentagem oficial vai pra barra sem passar por fatia nem por fator. A varredura dos transcritos ainda precisa dar certo, porém - ela alimenta o campo diário, e sem ela os dois campos do Fable somem juntos.
+- **O fator de calibração se re-mede sozinho** a cada busca, contra a fatia local do mesmo instante. O `FABLE_SHARE_CALIBRATION` do fonte serve só de fallback pra quando não houver medição.
+- **O campo diário do Fable segue estimativa.** A API entrega o recorte semanal por modelo e nada diário, então esse campo sai da fatia local, corrigida pelo fator auto-medido.
+
+Como ele se comporta:
+
+| | |
+| --- | --- |
+| atualização | a cada 10 min, casando com o TTL da varredura local pra que os dois lados do fator fiquem próximos no tempo; a fatia local é aceita com até 20 min, então são quase simultâneos, não simultâneos |
+| validade | número de até 1h ainda é usado; passando disso a barra cai na estimativa |
+| onde roda | processo destacado, nunca dentro do render - rede lenta não trava a barra |
+| em caso de falha | o último número bom é preservado, o erro é registrado, e a próxima tentativa espera ao menos 2 min. Sessões concorrentes são serializadas por um lock no carimbo de tentativa, então várias sessões abertas ainda produzem uma busca só; sem `fcntl` (Windows) essa serialização é só best-effort |
+| o token | lido, usado numa requisição à Anthropic, e nunca escrito no cache, no log ou no stdout |
+
+Pra ver o que ele achou, rodando na mão:
+
+```bash
+CLAUDE_STATUSLINE_USAGE_API=1 python claude_usage_fetch.py --print
+```
+
+> **Ressalvas antes de ligar.** O `/api/oauth/usage` é o endpoint que o próprio Claude Code chama, mas não tem contrato público: pode mudar ou sumir sem aviso. Ele é tratado como não-confiável por desenho: falha nunca produz número errado - ela preserva a última leitura boa, que segue utilizável por até uma hora, e só então a barra cai na estimativa. O script também nunca renova o token OAuth; achando um vencido, pula a rodada e espera o CLI renovar.
 
 ### O teto diário do Fable amplifica o erro
 
@@ -164,12 +195,12 @@ O campo **semanal** responde de forma proporcional ao fator. O **diário**, não
 | --- | --- | --- | --- |
 | 1,000 (cru) | 50,8% | 93,4% | **89,2%** |
 | 0,920 | 46,7% | 86,0% | 51,4% |
-| **0,894** (em uso) | 45,4% | **83,5%** | **44,6%** |
+| 0,894 | 45,4% | **83,5%** | **44,6%** |
 | 0,800 | 40,6% | 74,7% | 28,7% |
 
-Medido com a semana em 92% e **dois dias até o reset** - o número de dias entra no cálculo do teto, então faz parte da medição. Um ponto de erro na fatia move o semanal ~1,8 ponto e o diário dezenas. **Lê o diário como ordem de grandeza, não como medida.** Deixar ele cru ao lado de um semanal calibrado seria pior - misturaria duas réguas na mesma barra.
+A tabela ilustra a amplificação com a semana em 92% e **dois dias até o reset**; o número de dias entra no cálculo do teto, então faz parte da leitura, e os fatores listados são uma faixa, não um histórico. Um ponto de erro na fatia move o semanal ~1,8 ponto e o diário dezenas. **Lê o diário como ordem de grandeza, não como medida.** Deixar ele cru ao lado de um semanal calibrado seria pior - misturaria duas réguas na mesma barra.
 
-> **A calibração vale para a ponderação que a Anthropic praticava em 2026-07-30.** Não é constante da natureza - eles podem re-ponderar a cota quando quiserem, e no dia em que fizerem isso o fator fica errado sem nada acusar. Nada no script detecta esse envelhecimento; só re-medir detecta.
+> **A calibração vale só para a ponderação que a Anthropic pratica hoje.** Não é constante da natureza: eles podem re-ponderar a cota a qualquer momento, e quando fizerem isso o fator fica errado sem nada acusar. Nenhuma parte do script detecta isso; só re-medir detecta, seja a mão ou automaticamente.
 
 **Re-medir** é ler os dois números na tela de usage, no mesmo instante, e rodar:
 
@@ -203,7 +234,7 @@ Então: o **teto** dos dois números é oficial, e a posição dentro dele é es
 
 O que sobra de erro depois da calibração tem causa conhecida, e nenhuma constante resolve: a Anthropic raciona por horas de modelo, o script pondera por custo em dólar. O fator encosta os dois num ponto de operação, e é só isso que ele faz - não transforma um proxy no outro. Mudando muito a mistura de modelos, a diferença volta a abrir.
 
-O painel do Claude Code (`/usage`) mostra o número oficial do Fable, que o payload não entrega. Se tu quiser o valor exato, é lá. A barra é pra tu não precisar olhar.
+O painel do Claude Code (`/usage`) mostra o número oficial do Fable, que o payload não entrega. Se tu quiser o valor exato, é lá. A barra é pra tu não precisar olhar - e com a [leitura oficial](#lendo-o-número-oficial-opt-in) ligada ela mostra esse mesmo número sem tu abrir o painel.
 
 Dois detalhes do payload que valem pra qualquer status line. O `rate_limits` só aparece pra assinante Pro/Max **depois da primeira resposta da API na sessão**, e cada janela pode faltar sozinha - por isso tudo aqui passa por `safe()`. E o `context_window.used_percentage` é calculado **só com os tokens de input** (`input + cache_creation + cache_read`, sem `output_tokens`); o fallback do script usa a mesma fórmula pra não divergir do número oficial.
 
@@ -225,7 +256,10 @@ Tudo que tu ia querer mudar mora nas constantes do topo, cada uma com um coment�
 - `SCAN_DEADLINE` (8 s) - orçamento de tempo da varredura dos transcripts. Passou disso, a estimativa da rodada é descartada e vale o último cache, mesmo velho.
 - `PRICES` - USD por 1M tokens, casados pelo prefixo do id do modelo. **Confere as tabelas de preço antes de confiar no número** (as do arquivo foram verificadas em julho de 2026); o casamento é por prefixo, então a ordem das entradas importa.
 - `FABLE_CAP_SHARE` - a fatia da cota semanal que o Fable pode ocupar (0.50 = o limite oficial no Max/Team Premium).
-- `FABLE_SHARE_CALIBRATION` - correção empírica da fatia estimada do Fable, média de duas medições contra o número oficial em 2026-07-30 (0.894). Re-medir com `--calibrate`; `1.0` desliga.
+- `FABLE_SHARE_CALIBRATION` (1.382) - correção empírica da fatia estimada do Fable, medida contra o número oficial. Re-medir com `--calibrate`; `1.0` desliga. Com a leitura oficial ligada ele é contornado no campo semanal e substituído no diário sempre que houver medição fresca; quando a fatia local falta ou é de outro período, não há medição possível e o diário usa esta constante.
+- `USAGE_API_ENV` / `CLAUDE_STATUSLINE_USAGE_API` - põe `1` pra ler o número oficial por modelo em vez de estimar. Desligado por padrão.
+- `OFFICIAL_TTL` (600 s) e `OFFICIAL_MAX_AGE` (3600 s) - de quanto em quanto tempo o oficial é re-buscado, e quão velho ele pode ficar antes de a barra cair na estimativa.
+- `OFFICIAL_SPAWN_FLOOR` (120 s) - intervalo mínimo entre duas tentativas de busca, pra rede caída não gerar processo a cada refresh.
 - `CTX_HINT` - o texto que aparece quando o contexto passa de 75%.
 - `QUOTA_DASHES` - o risquinho que abre e fecha a segunda linha.
 
@@ -275,7 +309,7 @@ python statusline.py --selftest     # checks internos, 0 dependências
 python statusline.py --calibrate 92 84   # re-mede o fator do Fable: <all%> <fable%>
 ```
 
-Ele imprime quantos checks rodaram: `OK - selftest (251 checks, 0 falha(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada. No Windows sai um a menos: o check de modo de arquivo só quer dizer alguma coisa onde existe permissão POSIX.
+Ele imprime quantos checks rodaram: `OK - selftest (308 checks, 0 failure(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada. No Windows sai um a menos: o check de modo de arquivo só quer dizer alguma coisa onde existe permissão POSIX.
 
 Cobrem formatação de duração e de token, os termômetros, inferência da janela de contexto, a aritmética dos dois tetos (semana limpa, dia anterior estourado, véspera do reset, saldo zerado), decodificação do payload e a montagem das duas linhas. E mais, com arquivo temporário de verdade: o leitor reverso, a deduplicação de streaming, a janela de tempo, o custo ponderado e o cache em disco.
 

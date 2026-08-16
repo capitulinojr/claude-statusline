@@ -240,7 +240,8 @@ FABLE_PREFIXES = ("claude-fable",)
 #   2026-07-30 morning   raw share 51.33%   official 84% of 92%   ->  0.889
 #   2026-07-30 afternoon raw share 50.88%   official 86% of 94%   ->  0.899
 #   2026-07-31           raw share 38.35%   official  5% of  7%   ->  0.931  (noisy)
-#   2026-08-05           raw share 47.36%   official 60% of 68%   ->  0.931  <- IN USE
+#   2026-08-05           raw share 47.36%   official 60% of 68%   ->  0.931
+#   2026-08-16           raw share 24.66%   official 15% of 22%   ->  1.382  <- IN USE
 #
 # Until 08-05 the value was 0.894, the average of the two 07-30 points, and this
 # note claimed there was "no drift to chase". There was. Propagating only the
@@ -266,7 +267,32 @@ FABLE_PREFIXES = ("claude-fable",)
 # The ranges above propagate only the SCREEN's rounding. The raw share comes from
 # the local scan and carries its own, unmeasured uncertainty - so they are a floor
 # on the uncertainty, not the whole of it.
-FABLE_SHARE_CALIBRATION = 0.931
+#
+# 2026-08-16: the factor CROSSED 1.0 and the sign of the bias flipped. Until now
+# every measurement sat below 1 - the local share OVERestimated Fable and the
+# factor cut it down. Now it UNDERestimates: with the bar at 10.1%, the official
+# number read 15%. The rounding ranges still do not touch, by a wide margin:
+#
+#   08-05   0.931  (0.917 - 0.946)
+#   08-16   1.382  (1.306 - 1.462)
+#
+# The likeliest cause is the (b) this note already anticipated, now pointing the
+# other way: Fable usage that counts against the quota and leaves NO transcript on
+# this machine - claude.ai on the web, Cowork, another device. The usage screen
+# itself warns that its breakdown is "based on local sessions on this machine";
+# the CAP at the top comes from the server and sees everything. Fable used
+# elsewhere shows up only in the official number, and the local scan, blind to it,
+# comes in low. One measurement cannot separate that from a quota re-weighting.
+#
+# Practical consequence: while the share of Fable running off this machine varies,
+# so does the factor - re-measure more often than before, preferably with the week
+# well advanced (a large official number means a narrow range). This point was
+# measured with the week at 22%, so its range is wide.
+#
+# This constant is now a FALLBACK. With `USAGE_API_ENV` enabled, the factor is
+# re-measured on every round against the official number and this value is only
+# used when no measurement is available - see `factor_in_use`.
+FABLE_SHARE_CALIBRATION = 1.382
 # The weekly share moves slowly and the scan now covers the subagents too, so it
 # reads a lot more disk. 10 min keeps the cost near 1% of one core; below that
 # the scan gets heavy again without improving the reading.
@@ -297,6 +323,36 @@ TOKENS_TOTAL = TOKENS_CTX + ("output_tokens",)
 # there.
 STATE_DIR = Path.home() / ".claude"
 WEEK_CACHE_FILE = "statusline-week-share.json"
+# OFFICIAL per-model usage, written by the sibling `claude_usage_fetch.py`. It
+# fetches from `GET /api/oauth/usage` (the same endpoint Claude Code itself uses)
+# what the status line payload does NOT carry: how much of the Fable cap is gone.
+# When the file is present and fresh, the weekly Fable field STOPS being an
+# estimate and becomes a reading.
+OFFICIAL_CACHE_FILE = "statusline-usage-official.json"
+FETCH_OFFICIAL = Path(__file__).resolve().parent / "claude_usage_fetch.py"
+# Re-fetch every 10 min - the SAME TTL as the local scan, and not for the sake of
+# symmetry: the calibration factor is a ratio between the official number and the
+# local share, and different cadences would make every factor mix two instants,
+# which is exactly the flaw in the manual calibration this replaces. On top of
+# that the official number arrives rounded to an INTEGER, so chasing finer
+# granularity than 10 min buys no precision at all.
+OFFICIAL_TTL = 600
+# Up to 1h old, the official number still beats the estimate - the weekly quota
+# moves slowly (a 7-day window) and the number carries a timestamp. Past that the
+# bar falls back to the estimate: an old number painted in the same color as a
+# fresh one is precisely what this file refuses everywhere else.
+OFFICIAL_MAX_AGE = 3600
+# Floor between two spawns of the fetch, so a fast repeated failure (no network)
+# does not turn into a burst of processes on every 15s refresh.
+OFFICIAL_SPAWN_FLOOR = 120
+OFFICIAL_STAMP_FILE = "statusline-usage-spawn.stamp"
+# Fetching the official number is OPT-IN. It reads the user's credential from the
+# Keychain and calls an endpoint with no public contract: on the author's machine
+# that is his own account, but in a program other people install, reading the
+# keychain of whoever downloaded it without them asking is not an acceptable
+# default, however benign the use. Disabled, the bar estimates the Fable share
+# exactly as it always did.
+USAGE_API_ENV = "CLAUDE_STATUSLINE_USAGE_API"
 # Dump of the last payload: handy for finding out which field Claude Code sends,
 # but the payload carries the session name and paths. Writing that on every
 # refresh without the user asking is a leak, not a convenience - it sits behind
@@ -359,10 +415,41 @@ def write_private(path: Path, text: str) -> None:
     CREATION time: creating and then `chmod` leaves a window in which the file
     exists wide open. On Windows the mode is ignored, and the profile's ACL
     already covers it.
+
+    It writes to a temporary file and RENAMES it over the target, rather than
+    truncating the target. One move solves three problems:
+
+    - `O_CREAT` only applies the mode at CREATION. A file that already exists as
+      0644 - from an older version, or created by hand - stayed 0644 forever,
+      while the mode on the `open` gave the impression of protecting it.
+    - Truncating and writing leaves a window in which a concurrent reader sees
+      half a JSON document. With `os.replace` the swap is atomic: the reader
+      sees either the whole old version or the whole new one.
+    - `O_NOFOLLOW` on the temporary refuses a planted symlink, and the `replace`
+      substitutes the link at the destination instead of writing through it.
+
+    The temporary's name carries the PID so two concurrent rounds do not fight
+    over the same file. Leftovers from a dead process are removed before
+    retrying: `O_EXCL` would otherwise refuse an old temporary from the same PID
+    forever.
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(text)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(tmp, flags, 0o600)
+    except FileExistsError:
+        os.unlink(tmp)
+        fd = os.open(tmp, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def state_file(name: str) -> Path:
@@ -1195,18 +1282,224 @@ def daily_total_percent(data: dict) -> float | None:
     return daily_cap_percent(window.percent, today_spent, 100.0, window.days)
 
 
+def usage_api_enabled() -> bool:
+    """Whether fetching the OFFICIAL usage is enabled (`USAGE_API_ENV`).
+
+    Opt-in by design, not by technical caution - see the constant's comment.
+    Enable with `export CLAUDE_STATUSLINE_USAGE_API=1`.
+    """
+    value = as_text(os.environ.get(USAGE_API_ENV, "")).strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def _official_raw() -> dict:
+    """The official cache as it sits on disk, with no freshness filter.
+
+    Kept apart from `official_usage` because the fetch trigger needs to see the
+    STALE record - that record is precisely what says it is time to fetch again.
+    """
+    try:
+        record = json.loads(state_file(OFFICIAL_CACHE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def official_usage(now: float | None = None) -> dict | None:
+    """The officially measured usage, if it was measured recently. Else None.
+
+    None on any doubt - API disabled, file missing, no timestamp, too old, or a
+    timestamp in the FUTURE (the clock moved). The caller falls back to the
+    estimate, which is the honest degradation: an old number painted in the same
+    color as a fresh one is what this file refuses everywhere else.
+    """
+    if not usage_api_enabled():
+        return None
+    now = time.time() if now is None else now
+    record = _official_raw()
+    ts = finite_number(record.get("ts"))
+    if ts is None or not 0 <= now - ts <= OFFICIAL_MAX_AGE:
+        return None
+    # Age alone is not enough: the measurement carries the RESET of the window it
+    # belongs to, and one taken shortly before the weekly reset would stay
+    # "fresh" for up to an hour AFTER it - the bar would show 99% of the cap with
+    # the new week at 0%. Once the reset the record itself declares has passed,
+    # the record belongs to another week and no longer counts, however new it is.
+    reset = parse_ts(record.get("fable_resets_at") or record.get("week_resets_at"))
+    if reset is not None and now >= reset:
+        return None
+    return record
+
+
+def official_percent(record, key: str) -> float | None:
+    """One percentage out of the official cache, validated as outside data.
+
+    It IS outside data: the file may have been written by an older version of the
+    fetcher, truncated mid-write, or hand-edited.
+    """
+    if not isinstance(record, dict):
+        return None
+    value = finite_number(record.get(key))
+    if value is None or not 0 <= value <= 100:
+        return None
+    return value
+
+
+def factor_in_use(record) -> float:
+    """The calibration factor to apply to the LOCAL Fable share.
+
+    The re-measured one wins: the fetcher recomputes the factor on every round
+    against the local share of the same instant, which is what stops the
+    calibration from silently ageing - the flaw that motivated all of this. The
+    source constant is the floor, and is the only value when the API is disabled.
+    A factor outside 0..5 is not bad calibration, it is a corrupt file.
+    """
+    measured = finite_number(record.get("factor")) if isinstance(record, dict) else None
+    if measured is None or not 0 < measured <= 5:
+        return FABLE_SHARE_CALIBRATION
+    return measured
+
+
+def should_fetch_official(now: float, ts, attempt) -> bool:
+    """Whether it is time to fetch the official number again. PURE decision.
+
+    Split from the spawn because whatever reads the clock and creates processes
+    gives no deterministic test - and this is the part that needs one, not the
+    `Popen`. Two brakes with different deadlines: the TTL (age of the
+    MEASUREMENT) says when the number got old, and the floor (age of the ATTEMPT)
+    stops a fast repeated failure from becoming a burst of processes. A timestamp
+    in the future counts as absent, as everywhere else in this file.
+    """
+    if ts is not None and 0 <= now - ts < OFFICIAL_TTL:
+        return False
+    if attempt is not None and 0 <= now - attempt < OFFICIAL_SPAWN_FLOOR:
+        return False
+    return True
+
+
+def claim_attempt(stamp: Path, now: float) -> bool:
+    """Try to win the turn to fetch. True for only ONE session per floor window.
+
+    Reading the mtime and then writing gives no exclusion: between the two
+    operations every session reads the same old stamp and each believes it won -
+    measured with 5 Claude Code sessions, that produced 5 fetches at the same
+    instant. Here the stamp is opened once and locked with a non-blocking
+    `flock`; whoever misses the lock drops the round, and the mtime is re-checked
+    INSIDE the lock, the only point where it cannot change underneath the
+    decision.
+
+    A freshly created file is born with an mtime of now, so the mtime alone would
+    block everyone's first fetch. SIZE is what separates the two cases: a stamp
+    that was never claimed holds 0 bytes; whoever claims it writes 1.
+
+    Without `fcntl` (Windows) the mtime check is all that is left: a race again,
+    but it still stops the refresh burst of a single session, which is the common
+    case.
+    """
+    try:
+        fd = os.open(stamp, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return False
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:
+            pass  # no flock on this platform: carry on with the mtime alone
+        except OSError:
+            return False  # another session holds the turn right now
+        try:
+            state = os.fstat(fd)
+        except OSError:
+            return False
+        claimed = state.st_size > 0
+        # A stamp NEWER than the reference `now` counts as recent, not as absent.
+        # The rest of this file treats the future as missing data, but the
+        # meaning differs here: `now` is read at the start of the render and the
+        # stamp is written microseconds later, so the session that got in first
+        # produces a NEGATIVE age. With a floor of 0 that read as "nobody
+        # claimed it" and fired anyway - the very hole this lock closes. An
+        # absurd future (a clock moved back) counts again, so the fetch is not
+        # blocked forever.
+        age = now - state.st_mtime
+        if claimed and -86400 <= age < OFFICIAL_SPAWN_FLOOR:
+            return False
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, b"x")  # claims it and moves the mtime in the same stroke
+        return True
+    finally:
+        os.close(fd)
+
+
+def spawn_official_fetch(now: float | None = None) -> bool:
+    """Fire the fetcher DETACHED once the cache expires. Never waits for it.
+
+    The render has a deadline and Claude Code KILLS a status line still running
+    when the next refresh arrives: a network call in here would turn a slow
+    network into a bar that never appears. All that happens here is the process
+    being started - whoever reads the result is the NEXT round, from the file.
+
+    The attempt stamp is a file of its OWN, not the `attempt_ts` inside the
+    cache, because it has to advance even when the child never gets as far as
+    writing (missing script, broken interpreter). Without it, the "spawn always
+    fails" case would become a fork attempt every 15 seconds.
+    """
+    if not usage_api_enabled():
+        return False
+    now = time.time() if now is None else now
+    stamp = state_file(OFFICIAL_STAMP_FILE)
+    try:
+        last = stamp.stat().st_mtime
+    except OSError:
+        last = None
+    if not should_fetch_official(now, finite_number(_official_raw().get("ts")), last):
+        return False
+    # The stamp is the MUTEX, which is why it is claimed through an exclusive
+    # open rather than through `write_private`. Between the `stat` above and the
+    # write there is a window in which several sessions read the same old stamp
+    # and each believes it was elected: with 5 Claude Code sessions open, that
+    # measured 5 fetches at the same instant.
+    if not claim_attempt(stamp, now):
+        return False
+    try:
+        import subprocess
+
+        subprocess.Popen(
+            [sys.executable, str(FETCH_OFFICIAL)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except (OSError, ValueError, ImportError):
+        return False
+    return True
+
+
 def fable_cap_percent(data: dict) -> tuple[float, float] | None:
     """(% of Fable's WEEKLY cap, % of the DAILY one) already consumed.
 
-    The CAP is official (FABLE_CAP_SHARE); what is estimated here is HOW MUCH OF
-    IT is already gone.
+    The CAP is official (FABLE_CAP_SHARE). How much of it is gone comes from one
+    of two sources, in this order:
 
-    The payload does not break consumption down by model - the official status
-    line docs list only `rate_limits.five_hour` and `rate_limits.seven_day`, with
-    nothing per model, so there is no official number to use instead (checked
-    2026-07-26). We derive Fable's share from the week's transcripts (weighted
-    cost, not raw tokens, which is what approximates the quota) and project it
-    onto that aggregate:
+    1. MEASURED, when `official_usage()` answers: Fable's weekly consumption read
+       from `GET /api/oauth/usage` by the sibling `claude_usage_fetch.py`. It is
+       the same number the claude.ai usage screen shows. Opt-in - see
+       `USAGE_API_ENV`.
+    2. ESTIMATED, the usual path, when there is no fresh official number.
+
+    The DAY field has no official source in either case: the API serves the
+    weekly per-model slice and nothing daily, so it always comes from the local
+    share corrected by `factor_in_use`. The difference is that, with the API
+    enabled, that factor is RE-MEASURED every round instead of sitting in the
+    source ageing.
+
+    The payload Claude Code sends here does not break consumption down by model -
+    it lists only `rate_limits.five_hour` and `rate_limits.seven_day` (checked
+    2026-07-26), and that gap is what the estimate covers. It derives Fable's
+    share from the week's transcripts (weighted cost, not raw tokens, which is
+    what approximates the quota) and projects it onto that aggregate:
 
         fable_share = fable_cost / total_cost   (over the 7 days)
         quota_points_spent_by_fable = fable_share * seven_day.used_percentage
@@ -1220,21 +1513,42 @@ def fable_cap_percent(data: dict) -> tuple[float, float] | None:
     - the real weighting of each model inside the quota is not published. It
     serves as a compass, not as accounting.
     """
+    spawn_official_fetch()
     window = weekly_window(data)
     if window is None:
         return None
     shares = cost_shares(window.start)
     if shares is None:  # no basis to estimate the share: both fields disappear
         return None
+    official = official_usage()
     weekly_cap = FABLE_CAP_SHARE * 100  # quota points Fable may occupy
     # The calibration is applied HERE, at consumption time, and not inside
     # `cost_shares`: that way the cache keeps the RAW share and changing the
     # factor takes effect immediately, with no need to invalidate the file (and
     # without mixing measurement and correction into the same number).
-    share = shares.fable * FABLE_SHARE_CALIBRATION
-    day_share = shares.fable_day * FABLE_SHARE_CALIBRATION
-    week_spent = share * window.percent
+    factor = factor_in_use(official)
+    day_share = shares.fable_day * factor
     today_spent = day_share * window.percent
+    # The WEEKLY one, when a fresh official number exists, is a reading and not
+    # an estimate - which is why it goes in directly, through neither share nor
+    # factor. The spend in quota points is reconstructed from it because the DAY
+    # cap needs the remaining balance, and that balance has to come from the same
+    # number the bar displays: deriving the weekly from the official and the daily
+    # from the estimate would put two rulers on one bar, which is what this
+    # function already refused by calibrating both together.
+    official_week = official_percent(official, "fable_percent")
+    if official_week is not None:
+        week_spent = official_week / 100 * weekly_cap
+        # TODAY sits INSIDE the week, so it cannot have spent more than the week
+        # has. On the all-estimated path the inequality holds by construction
+        # (the day's share comes from the same denominator as the week's), but
+        # here the two sides come off different rulers: the weekly measured, the
+        # daily estimated. Without the cap, a daily estimate above the official
+        # weekly makes the day's balance start out LARGER than the cap - the bar
+        # would reach "week 0%, day 250%".
+        today_spent = min(today_spent, week_spent)
+    else:
+        week_spent = shares.fable * factor * window.percent
     # NOT capped, for the same reason the daily cap is not: 100% here is the
     # point where Fable leaves the included tier and starts eating credits, so
     # 144% is the most actionable thing on the bar - "you passed it a while ago".
@@ -1679,20 +1993,23 @@ def selftest() -> int:
     check("the computed factor reproduces the official",
           round(pct_with(calibration_factor(measured_share, 92.0, 84.0)), 1), 84.0)
     # The factor IN USE has to reproduce the measurement that JUSTIFIES it - since
-    # 2026-08-05, that day's, no longer the 07-30 average (table at the top of the
-    # file). Without this check, swapping the factor without recording the new
-    # measurement would go unnoticed. The 1-point tolerance is the order of the
-    # uncertainty in the official numbers, which the screen serves rounded to
+    # 2026-08-16, that day's, no longer 08-05's nor the 07-30 average (table at the
+    # top of the file). Without this check, swapping the factor without recording
+    # the new measurement would go unnoticed. The 1-point tolerance is the order of
+    # the uncertainty in the official numbers, which the screen serves rounded to
     # integers.
     check("the factor in use reproduces the measurement behind it",
-          abs(pct_with(FABLE_SHARE_CALIBRATION, share=0.4736, all_pct=68.0) - 60.0) < 1.0,
+          abs(pct_with(FABLE_SHARE_CALIBRATION, share=0.2466, all_pct=22.0) - 15.0) < 1.0,
           True)
-    # And it no longer reproduces the 07-30 regime. This check is the pair of the
-    # one above: it is what records, executably, that there was a REGIME CHANGE and
-    # not a tweak - if some future factor serves both periods at once, the premise
-    # behind swapping the value (ranges that do not touch) has fallen, and that has
-    # to show up as a failure rather than as silence.
-    check("and no longer reproduces the old regime",
+    # And it no longer reproduces the earlier regimes. These checks are the pair of
+    # the one above: they are what records, executably, that there was a REGIME
+    # CHANGE and not a tweak - if some future factor serves two periods at once, the
+    # premise behind swapping the value (ranges that do not touch) has fallen, and
+    # that has to show up as a failure rather than as silence.
+    check("and no longer reproduces the 08-05 regime",
+          abs(pct_with(FABLE_SHARE_CALIBRATION, share=0.4736, all_pct=68.0) - 60.0) < 1.0,
+          False)
+    check("and no longer reproduces the 07-30 regime",
           abs(pct_with(FABLE_SHARE_CALIBRATION) - 84.0) < 1.0, False)
     # A different pair, to make sure the formula was not fitted to the single case
     # that motivated it.
@@ -1744,6 +2061,289 @@ def selftest() -> int:
           True)
     check("a cache written in the future does not",
           cache_is_calibratable(good_start, today_t, now_t + 60, now_t) != "", True)
+
+    # ------------------------------------------------- OFFICIAL usage (opt-in)
+    # The path that swaps Fable's estimate for a reading. Everything on a fixed
+    # clock and in a temporary directory - nothing here touches the network or
+    # creates a process: the `Popen` is deliberately left out, and what gets
+    # tested is the DECISION to fire, which is the part with a rule in it.
+    import tempfile as _tempfile
+
+    real_env = os.environ.get(USAGE_API_ENV)
+    real_state = globals()["state_file"]
+    real_fetch = globals()["FETCH_OFFICIAL"]
+    with _tempfile.TemporaryDirectory(prefix="statusline-official-") as _dir:
+        base = Path(_dir)
+        try:
+            globals()["state_file"] = lambda name: base / name
+            # Point the fetcher at a path that does NOT exist: that way no test
+            # here can create a real process or touch the network, not even under
+            # a mutation that removes one of the brakes.
+            globals()["FETCH_OFFICIAL"] = base / "does-not-exist.py"
+
+            def write_official(**fields):
+                (base / OFFICIAL_CACHE_FILE).write_text(
+                    json.dumps(fields), encoding="utf-8")
+
+            def enable(value):
+                if value is None:
+                    os.environ.pop(USAGE_API_ENV, None)
+                else:
+                    os.environ[USAGE_API_ENV] = value
+
+            t0 = 1_800_000_000.0
+            write_official(ts=t0, fable_percent=17.0, all_percent=24.0, factor=1.4)
+
+            # -- the gate. Disabled is the DEFAULT, and a perfect cache does not
+            #    open it.
+            enable(None)
+            check("the API is disabled by default", usage_api_enabled(), False)
+            check("disabled, a fresh official number is ignored",
+                  official_usage(t0), None)
+
+            # Firing with an EXPIRED cache: with a fresh one the TTL brake holds
+            # on its own and the test would pass even without the gate - a fixture
+            # that fails to tell the two candidates apart (a mutant survived that
+            # way). And what gets observed is the attempt STAMP, not just the
+            # return value. Pointing the fetcher at a missing path does NOT stop
+            # `Popen`: the executable is python itself and the bad path is only an
+            # argument, so a process is born and dies at once, with no network and
+            # no writes. The stamp is what proves both brakes were passed.
+            stamp = base / OFFICIAL_STAMP_FILE
+            write_official(ts=t0 - 86400, fable_percent=17.0)
+            stamp.unlink(missing_ok=True)
+            check("disabled, does not fire the fetch", spawn_official_fetch(t0), False)
+            check("disabled, does not even try", stamp.exists(), False)
+            enable("1")
+            check("enabled and expired, it tries", spawn_official_fetch(t0), True)
+            check("enabled and expired, it stamps the attempt", stamp.exists(), True)
+            stamp.unlink(missing_ok=True)
+            write_official(ts=t0, fable_percent=17.0, all_percent=24.0, factor=1.4)
+
+            enable("0")
+            check("the value 0 does not enable it", usage_api_enabled(), False)
+            enable("maybe")
+            check("an unknown value does not enable it", usage_api_enabled(), False)
+            enable("1")
+            check("the value 1 enables it", usage_api_enabled(), True)
+            enable("On")
+            check("enabling does not depend on case", usage_api_enabled(), True)
+
+            # -- freshness of the official number
+            enable("1")
+            check("a fresh official number is used",
+                  (official_usage(t0) or {}).get("fable_percent"), 17.0)
+            check("at the edge of the max age it still counts",
+                  (official_usage(t0 + OFFICIAL_MAX_AGE) or {}).get("fable_percent"), 17.0)
+            check("too old and it disappears",
+                  official_usage(t0 + OFFICIAL_MAX_AGE + 1), None)
+            check("a timestamp in the future disappears", official_usage(t0 - 1), None)
+            write_official(fable_percent=17.0)
+            check("no timestamp, no deal", official_usage(t0), None)
+            write_official(ts=float("nan"), fable_percent=17.0)
+            check("a NaN timestamp is no deal", official_usage(t0), None)
+            (base / OFFICIAL_CACHE_FILE).write_text("{ this is not json", encoding="utf-8")
+            check("a corrupt file does not bring it down", official_usage(t0), None)
+            (base / OFFICIAL_CACHE_FILE).write_text('["list"]', encoding="utf-8")
+            check("json that is not an object is no deal", official_usage(t0), None)
+            (base / OFFICIAL_CACHE_FILE).unlink()
+            check("a missing file is no deal", official_usage(t0), None)
+
+            # The RESET of the window the measurement belongs to. Age alone let a
+            # measurement taken shortly before the reset count for another hour
+            # after it - the bar would show 99% of the cap with the new week at
+            # 0%.
+            from datetime import timezone as _tz
+
+            def iso(epoch):
+                return datetime.fromtimestamp(epoch, _tz.utc).isoformat()
+
+            write_official(ts=t0, fable_percent=99.0, fable_resets_at=iso(t0 + 60))
+            check("a measurement whose window is still open counts",
+                  (official_usage(t0) or {}).get("fable_percent"), 99.0)
+            write_official(ts=t0, fable_percent=99.0, fable_resets_at=iso(t0 - 60))
+            check("a measurement past its reset does not, however new",
+                  official_usage(t0), None)
+            write_official(ts=t0, fable_percent=99.0, week_resets_at=iso(t0 - 60))
+            check("the week's reset stands in when Fable's is missing",
+                  official_usage(t0), None)
+            write_official(ts=t0, fable_percent=99.0, fable_resets_at="not a date")
+            check("an unreadable reset does not invalidate the measurement",
+                  (official_usage(t0) or {}).get("fable_percent"), 99.0)
+
+            # -- the percentage from the file, validated as outside data
+            check("a valid percentage passes",
+                  official_percent({"fable_percent": 17.0}, "fable_percent"), 17.0)
+            check("a NaN percentage disappears",
+                  official_percent({"fable_percent": float("nan")}, "fable_percent"), None)
+            check("a percentage above 100 disappears",
+                  official_percent({"fable_percent": 101}, "fable_percent"), None)
+            check("a negative percentage disappears",
+                  official_percent({"fable_percent": -1}, "fable_percent"), None)
+            check("a boolean percentage disappears",
+                  official_percent({"fable_percent": True}, "fable_percent"), None)
+            check("a non-dict record disappears",
+                  official_percent("x", "fable_percent"), None)
+
+            # -- the factor: measured beats the constant, junk falls back to it
+            check("a measured factor beats the constant",
+                  factor_in_use({"factor": 1.25}), 1.25)
+            check("no measurement falls back to the constant",
+                  factor_in_use({}), FABLE_SHARE_CALIBRATION)
+            check("a None record falls back to the constant",
+                  factor_in_use(None), FABLE_SHARE_CALIBRATION)
+            check("a NaN factor falls back to the constant",
+                  factor_in_use({"factor": float("nan")}), FABLE_SHARE_CALIBRATION)
+            check("a zero factor falls back to the constant",
+                  factor_in_use({"factor": 0.0}), FABLE_SHARE_CALIBRATION)
+            check("an absurd factor falls back to the constant",
+                  factor_in_use({"factor": 99.0}), FABLE_SHARE_CALIBRATION)
+
+            # -- the firing decision, on fixed numbers
+            check("with no measurement at all, fetch",
+                  should_fetch_official(t0, None, None), True)
+            check("a fresh measurement does not fetch",
+                  should_fetch_official(t0, t0 - OFFICIAL_TTL + 1, None), False)
+            check("an expired measurement fetches",
+                  should_fetch_official(t0, t0 - OFFICIAL_TTL, None), True)
+            check("a recent attempt holds even with an expired measurement",
+                  should_fetch_official(t0, t0 - 86400, t0 - OFFICIAL_SPAWN_FLOOR + 1),
+                  False)
+            check("an old attempt lets it through",
+                  should_fetch_official(t0, t0 - 86400, t0 - OFFICIAL_SPAWN_FLOOR), True)
+            check("a measurement in the future does not hold",
+                  should_fetch_official(t0, t0 + 600, None), True)
+            check("an attempt in the future does not hold",
+                  should_fetch_official(t0, t0 - 86400, t0 + 600), True)
+
+            # -- only ONE session wins the turn per floor window
+            # REAL clock here, not the `t0` fixture: what rules is the file's
+            # mtime, which the system stamps with the actual time. Mixing the two
+            # would make the difference millions of seconds and the floor would
+            # never bite - the check would pass while testing nothing.
+            real_now = time.time()
+            turn = base / "turn.stamp"
+            turn.unlink(missing_ok=True)
+            check("the first attempt wins", claim_attempt(turn, real_now), True)
+            check("the second, at the same instant, loses",
+                  claim_attempt(turn, real_now), False)
+            check("past the floor, it wins again",
+                  claim_attempt(turn, time.time() + OFFICIAL_SPAWN_FLOOR + 1), True)
+            # A 0-byte stamp means "never claimed": without that distinction a
+            # freshly created file would already fall inside the floor and the
+            # very first fetch would never happen.
+            turn.unlink(missing_ok=True)
+            turn.touch()
+            check("an empty stamp does not count as claimed",
+                  claim_attempt(turn, time.time()), True)
+
+            # The lock only shows up with REAL processes competing. Two calls in
+            # sequence are stopped by the mtime alone, so a sequential test lets
+            # the removal of `flock` through - a mutant survived exactly that way.
+            # Here three children start together and exactly one may win. Skipped
+            # where there is no `fork` (Windows), the same platform where the
+            # lock does not exist either.
+            if hasattr(os, "fork"):
+                race = base / "race.stamp"
+                race.unlink(missing_ok=True)
+                start_at = time.time() + 0.3
+                pipes = []
+                for _ in range(3):
+                    read_fd, write_fd = os.pipe()
+                    if os.fork() == 0:  # child
+                        os.close(read_fd)
+                        while time.time() < start_at:
+                            pass
+                        won = claim_attempt(race, time.time())
+                        os.write(write_fd, b"1" if won else b"0")
+                        os._exit(0)
+                    os.close(write_fd)
+                    pipes.append(read_fd)
+                wins = 0
+                for read_fd in pipes:
+                    wins += os.read(read_fd, 1) == b"1"
+                    os.close(read_fd)
+                for _ in pipes:
+                    os.wait()
+                check("on a simultaneous start, only one process wins the turn",
+                      wins, 1)
+
+            # -- integration: with a fresh official number the WEEKLY is a reading.
+            # Without this check, deleting the official branch inside
+            # `fable_cap_percent` would pass green - every function above would
+            # still be correct and nobody would be using them.
+            write_official(ts=t0, fable_percent=17.0, all_percent=24.0, factor=1.0)
+            fake_shares = Shares(fable=0.10, fable_day=0.05, day_total=0.5)
+            # The `fable_payload` helper is only defined further down in this same
+            # selftest, so the payload goes in by hand here.
+            payload_o = {"rate_limits": {"seven_day": {
+                "used_percentage": 24.0, "resets_at": day_start() + 5 * 86400}}}
+            real_cost, real_official = globals()["cost_shares"], globals()["official_usage"]
+            # The constant is pinned too: the ESTIMATED branch depends on it, and an
+            # expected literal computed from the value in use would be
+            # self-referential - it would pass for any value.
+            real_factor = globals()["FABLE_SHARE_CALIBRATION"]
+            try:
+                globals()["FABLE_SHARE_CALIBRATION"] = 1.0
+                globals()["cost_shares"] = lambda start: fake_shares
+                globals()["official_usage"] = lambda now=None: {
+                    "ts": t0, "fable_percent": 17.0, "factor": 1.0}
+                with_official = fable_cap_percent(payload_o)
+                globals()["official_usage"] = lambda now=None: None
+                without_official = fable_cap_percent(payload_o)
+            finally:
+                globals()["cost_shares"] = real_cost
+                globals()["official_usage"] = real_official
+                globals()["FABLE_SHARE_CALIBRATION"] = real_factor
+            check("with the official number, the weekly IS the official one",
+                  round(with_official[0], 1) if with_official else None, 17.0)
+            # Estimated: 0.10 * 1.0 * 24 = 2.4 points out of 50 = 4.8%. Far enough
+            # from 17 that the check above cannot pass by fixture coincidence.
+            check("without it, the weekly goes back to being estimated",
+                  round(without_official[0], 1) if without_official else None, 4.8)
+            check("the day field exists in both cases",
+                  (with_official is not None and with_official[1] is not None
+                   and without_official is not None and without_official[1] is not None),
+                  True)
+            # The day's VALUE, not just its existence. Without this check,
+            # replacing the daily with `0.0` on the official branch passed green -
+            # the hybrid arithmetic, which is the new part, went untested.
+            # 8.5 points on the week, 1.2 today, 5 days to the reset:
+            # balance = 50 - (8.5 - 1.2) = 42.7 -> day cap 8.54 -> 1.2/8.54.
+            check("with the official number, the day comes from the hybrid arithmetic",
+                  round(with_official[1], 1) if with_official else None, 14.1)
+
+            # And today's CAP against the week. Fixture chosen to differentiate:
+            # without the `min`, the day's balance would start out larger than
+            # the cap and the field would read 97.6% instead of 5.0%.
+            greedy_shares = Shares(fable=0.10, fable_day=0.50, day_total=0.9)
+            try:
+                globals()["FABLE_SHARE_CALIBRATION"] = 1.0
+                globals()["cost_shares"] = lambda start: greedy_shares
+                globals()["official_usage"] = lambda now=None: {
+                    "ts": t0, "fable_percent": 1.0, "factor": 1.0}
+                bigger_day = fable_cap_percent(payload_o)
+            finally:
+                globals()["cost_shares"] = real_cost
+                globals()["official_usage"] = real_official
+                globals()["FABLE_SHARE_CALIBRATION"] = real_factor
+            check("today never exceeds the official week",
+                  round(bigger_day[1], 1) if bigger_day else None, 5.0)
+        finally:
+            globals()["state_file"] = real_state
+            globals()["FETCH_OFFICIAL"] = real_fetch
+            if real_env is None:
+                os.environ.pop(USAGE_API_ENV, None)
+            else:
+                os.environ[USAGE_API_ENV] = real_env
+    # A fixture leak does not show up as an error: a test running under its own
+    # patch agrees with it. These prove the `finally` really did restore things.
+    check("state_file restored", globals()["state_file"] is real_state, True)
+    check("environment restored", os.environ.get(USAGE_API_ENV), real_env)
+    check("the calibration constant was restored",
+          globals()["FABLE_SHARE_CALIBRATION"], 1.382)
+    check("the fetcher path was restored",
+          globals()["FETCH_OFFICIAL"] is real_fetch, True)
 
     # ------------------------------------------ reading and summing transcripts
     # Up to here nothing exercised the reverse reader, the deduplication or the
