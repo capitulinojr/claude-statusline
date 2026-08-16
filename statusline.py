@@ -2266,23 +2266,65 @@ def _selftest_corpo() -> int:
             except ImportError:
                 _fcntl = None
             if _fcntl is not None and hasattr(os, "fork"):
+                import select as _select
+
+                def child_claims(target, mode):
+                    """b"1" if the child claimed, b"0" if it gave up, b"" if silent.
+
+                    The parent takes the lock in `mode` and the child runs
+                    `claim_attempt` against it.
+                    """
+                    target.unlink(missing_ok=True)
+                    parent_fd = os.open(target, os.O_RDWR | os.O_CREAT, 0o600)
+                    read_fd = write_fd = pid = None
+                    try:
+                        _fcntl.flock(parent_fd, mode)
+                        read_fd, write_fd = os.pipe()
+                        pid = os.fork()
+                        if pid == 0:  # child
+                            try:
+                                os.close(read_fd)
+                                took = claim_attempt(target, time.time())
+                                os.write(write_fd, b"1" if took else b"0")
+                            finally:
+                                os._exit(0)
+                        os.close(write_fd)
+                        write_fd = None
+                        # A DEADLINE, not a blind read: if someone ever drops the
+                        # `LOCK_NB` from production, the child blocks waiting for
+                        # the lock the parent only releases after reading, and
+                        # the selftest hangs FOREVER - including in CI, where
+                        # nobody is around to press Ctrl-C.
+                        ready = _select.select([read_fd], [], [], 10)[0]
+                        return os.read(read_fd, 1) if ready else b""
+                    finally:
+                        for fd in (read_fd, write_fd):
+                            if fd is not None:
+                                os.close(fd)
+                        try:
+                            _fcntl.flock(parent_fd, _fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                        os.close(parent_fd)
+                        if pid:
+                            # `waitpid` on OUR child. `os.wait()` reaps any of
+                            # them - including the fetch an earlier check fired -
+                            # and would leave this one a zombie.
+                            try:
+                                os.kill(pid, 9)
+                            except OSError:
+                                pass
+                            os.waitpid(pid, 0)
+
                 contested = base / "contested.stamp"
-                contested.unlink(missing_ok=True)
-                parent_fd = os.open(contested, os.O_RDWR | os.O_CREAT, 0o600)
-                _fcntl.flock(parent_fd, _fcntl.LOCK_EX)
-                read_fd, write_fd = os.pipe()
-                if os.fork() == 0:  # child
-                    os.close(read_fd)
-                    took = claim_attempt(contested, time.time())
-                    os.write(write_fd, b"1" if took else b"0")
-                    os._exit(0)
-                os.close(write_fd)
-                answer = os.read(read_fd, 1)
-                os.close(read_fd)
-                os.wait()
-                _fcntl.flock(parent_fd, _fcntl.LOCK_UN)
-                os.close(parent_fd)
-                check("with the lock held, the other session gives up", answer, b"0")
+                check("with an exclusive lock held, the other session gives up",
+                      child_claims(contested, _fcntl.LOCK_EX), b"0")
+                # And with a SHARED lock too. Production asks for `LOCK_EX`, and
+                # only an exclusive request is refused by a shared lock already
+                # held. Without this second case, swapping `LOCK_EX` for
+                # `LOCK_SH` in production would pass the whole proof.
+                check("with a shared lock held, the exclusive one gives up too",
+                      child_claims(contested, _fcntl.LOCK_SH), b"0")
 
             # -- integration: with a fresh official number the WEEKLY is a reading.
             # Without this check, deleting the official branch inside
