@@ -62,7 +62,7 @@ flags skip `site-packages` and the `PYTHON*` environment variables: it starts
 faster, and a dirty `PYTHONPATH` can't break it.
 
 3. Check it. `python statusline.py --selftest` prints
-   `OK - selftest (0 failure(s))`.
+   `OK - selftest (308 checks, 0 failure(s))`.
 
 ---
 
@@ -163,10 +163,15 @@ the share onto the official aggregate:
 
 ```
 fable_share  = fable_cost / total_cost              (over the 7 days)
-fable_share  = fable_share × 0.894                  (measured calibration, below)
+fable_share  = fable_share × 1.382                  (measured calibration, below)
 points_spent_by_fable = fable_share × seven_day.used_percentage
 % of the cap = points ÷ 50 × 100                    (FABLE_CAP_SHARE = 50%)
 ```
+
+> **You can skip the estimate entirely.** The official per-model number *is*
+> reachable, and the bar can read it instead of deriving it - see
+> [Reading the official number](#reading-the-official-number-opt-in). It is
+> opt-in, and everything in this section is what happens when it is off.
 
 `FABLE_CAP_SHARE = 0.50` is Anthropic's stated limit, checked 2026-07-29, not a
 guess. On the Max and Team Premium plans, Fable 5 may consume up to half of your
@@ -184,21 +189,24 @@ API price is not quota weight. The raw share comes out high enough to paint the
 bar the wrong color, so it is multiplied by `FABLE_SHARE_CALIBRATION` before it
 becomes a percentage of the cap.
 
-**The value in use is 0.894**, the average of two measurements against the
-official number:
+The value shipped in `FABLE_SHARE_CALIBRATION` is **1.382**, from a measurement
+of a 24.66% raw share against an official 15% of a 22% quota. It is a single
+empirical point, not a constant of nature, and it carries a margin of roughly
+±0.08 from rounding alone: the usage screen serves integers, so "15%" is anything
+between 14.5 and 15.5. The raw share adds its own, unmeasured uncertainty on top.
 
-| measurement | raw share | official | factor |
-| --- | --- | --- | --- |
-| 2026-07-30, morning | 51.33% | 84% of 92% | 0.889 |
-| 2026-07-30, afternoon | 50.88% | 86% of 94% | 0.899 |
+A factor above 1 means the local share **understates** Fable; below 1, it
+overstates. Which way it points depends on how much Fable runs outside this
+machine - claude.ai on the web, Cowork, another device. That usage counts against
+the quota and leaves no local transcript, and the usage screen says as much: its
+breakdown is "based on local sessions on this machine", while the cap at the top
+comes from the server and sees everything. That proportion is not fixed, so
+neither is the factor. Re-measure it regularly, or turn on the official reading
+below and let it re-measure itself.
 
-Each one carries a margin of ~±0.01, all of it from rounding: the usage screen
-serves integers, so "84%" is anything between 83.5 and 84.5. The two factors land
-inside that margin of each other.
-
-Without the correction the bar reads about ten points above the official number -
-in the morning measurement, 94.4% of the cap against the real 84%. The deviation
-is always upward, so the bar cries wolf early.
+Measure with the week well advanced when you can: a large official number narrows
+the margin, and a factor measured against single-digit percentages is mostly
+rounding noise.
 
 **What the factor absorbs.** Two causes, which one measurement can't separate:
 
@@ -216,10 +224,65 @@ way it doesn't claim which of the two it is.
 
 **Where the official number lives:** Claude Code doesn't send it in the payload
 (only `five_hour` and `seven_day`), but claude.ai shows it under **Settings >
-Usage**, and the API behind that screen (`GET /api/organizations/<org>/usage`)
-returns all three limits in the `limits` array - the `weekly_all` entry is the
-total quota, and the `weekly_scoped` one with `scope.model.display_name: "Fable"`
-is Fable's cap.
+Usage**, and the API behind that screen returns all three limits in a `limits`
+array - the `weekly_all` entry is the total quota, and the `weekly_scoped` one
+with `scope.model.display_name: "Fable"` is Fable's cap. The next section reads
+exactly that.
+
+### Reading the official number (opt-in)
+
+`claude_usage_fetch.py` ships alongside the status line. It reads your OAuth
+credential from the Keychain, fetches `GET /api/oauth/usage` - the same endpoint
+Claude Code itself uses for its `/usage` panel - and caches the result. The bar
+then **displays** the official weekly Fable number instead of estimating it.
+
+**It is off by default.** Enable it with:
+
+```bash
+export CLAUDE_STATUSLINE_USAGE_API=1
+```
+
+With the variable unset, `claude_usage_fetch.py` is never invoked: nothing is
+read from your Keychain and nothing leaves the machine. A status line should not
+touch your credentials just because it can.
+
+With it set:
+
+- **The weekly Fable field becomes a reading**, not an estimate: the official
+  percentage goes to the bar without passing through the share or the factor.
+  The transcript scan still has to succeed, though - it feeds the daily field,
+  and without it both Fable fields disappear together.
+- **The calibration factor re-measures itself** on every fetch, against the local
+  share of that same instant. `FABLE_SHARE_CALIBRATION` in the source serves only
+  as the fallback for when no measurement is available.
+- **The daily Fable field remains an estimate.** The API serves a weekly
+  per-model slice and nothing daily, so that field comes from the local share,
+  corrected by the self-measured factor.
+
+How it behaves:
+
+| | |
+| --- | --- |
+| refresh | every 10 min, matching the local scan's TTL so the two sides of the factor stay close in time; the local share is accepted up to 20 min old, so they are near-simultaneous, not simultaneous |
+| staleness | a cached number up to 1h old is still used; past that the bar falls back to the estimate |
+| where it runs | a detached process, never inside the render - a slow network can't stall the bar |
+| on failure | the last good number is kept, the error is recorded, and the next attempt waits at least 2 min. Concurrent sessions are serialised by a lock on the attempt stamp, so several open sessions still produce one fetch; without `fcntl` (Windows) that serialisation is best-effort |
+| the token | read, used for one request to Anthropic, and never written to the cache, the logs or stdout |
+
+Run it by hand to see what it found:
+
+```bash
+CLAUDE_STATUSLINE_USAGE_API=1 python claude_usage_fetch.py --print
+```
+
+> **Caveats worth knowing before you enable it.** `/api/oauth/usage` is the
+> endpoint Claude Code itself calls, but it carries no public contract: it can
+> change or disappear without notice. It's treated as unreliable by design -
+> a failure never produces a wrong number: it keeps the last good reading, which
+> stays usable for up to an hour, and only then does the bar fall back to the
+> estimate.
+> The script also never refreshes the OAuth token; when it finds an expired one
+> it skips the round and waits for the CLI to renew it.
 
 ### Fable's daily cap amplifies the error
 
@@ -233,19 +296,20 @@ numbers:
 | --- | --- | --- | --- |
 | 1.000 (raw) | 50.8% | 93.4% | **89.2%** |
 | 0.920 | 46.7% | 86.0% | 51.4% |
-| **0.894** (in use) | 45.4% | **83.5%** | **44.6%** |
+| 0.894 | 45.4% | **83.5%** | **44.6%** |
 | 0.800 | 40.6% | 74.7% | 28.7% |
 
-Measured with the week at 92% and **two days until the reset** - the day count
-feeds the cap calculation, so it is part of the measurement. One point of error in
+The table illustrates the amplification with the week at 92% and **two days until
+the reset**; the day count feeds the cap calculation, so it is part of the
+reading, and the factors listed are a range, not a history. One point of error in
 the share moves the weekly ~1.8 points and the daily by tens. **Read the daily as an order of magnitude, not
 as a measurement.** Leaving it raw next to a calibrated weekly would be worse - it
 would mix two rulers on the same bar.
 
-> **The calibration holds for the weighting Anthropic applied on 2026-07-30.** It
-> is not a constant of nature - they can re-weight the quota whenever they want,
-> and the day they do, the factor is wrong with nothing to flag it. Nothing in the
-> script detects that aging; only re-measuring does.
+> **The calibration holds only for the weighting Anthropic applies today.** It is
+> not a constant of nature: they can re-weight the quota at any time, and when
+> they do, the factor is wrong with nothing to flag it. No part of the script
+> detects that; only re-measuring does, whether by hand or automatically.
 
 **To re-measure,** read both numbers off the usage screen, at the same moment, and
 run:
@@ -310,7 +374,9 @@ opens again.
 
 Claude Code's own usage panel (`/usage`) shows the official Fable number, the one
 the payload doesn't hand over. Want the exact value, it's there. The bar is so you
-don't have to look.
+don't have to look - and with
+[the official reading](#reading-the-official-number-opt-in) enabled it shows that
+same number without you opening the panel.
 
 Two payload details worth knowing for any status line. `rate_limits` only shows
 up for Pro/Max subscribers, and only after the first API response in the
@@ -355,9 +421,19 @@ comment:
   2026. Matching is by prefix, so entry order matters.
 - `FABLE_CAP_SHARE`: the share of the weekly quota Fable may occupy (0.50 = the
   official limit on Max/Team Premium).
-- `FABLE_SHARE_CALIBRATION`: empirical correction of Fable's estimated share, the
-  average of two measurements against the official number on 2026-07-30 (0.894).
-  Re-measure with `--calibrate`; `1.0` turns it off.
+- `FABLE_SHARE_CALIBRATION` (1.382): empirical correction of Fable's estimated
+  share, measured against the official number. Re-measure with `--calibrate`;
+  `1.0` turns it off. While the official reading is enabled it is bypassed for
+  the weekly field and superseded on the daily one whenever a fresh measurement
+  exists; when the local share is missing or from another period, no measurement
+  is possible and this constant is what the daily field uses.
+- `USAGE_API_ENV` / `CLAUDE_STATUSLINE_USAGE_API`: set it to `1` to read the
+  official per-model number instead of estimating it. Off by default.
+- `OFFICIAL_TTL` (600 s) and `OFFICIAL_MAX_AGE` (3600 s): how often the official
+  number is re-fetched, and how old it may get before the bar falls back to the
+  estimate.
+- `OFFICIAL_SPAWN_FLOOR` (120 s): minimum gap between two fetch attempts, so a
+  failing network cannot spawn a process on every refresh.
 - `CTX_HINT`: the text that shows up once context passes 75%.
 - `QUOTA_DASHES`: the little rule that opens and closes the second line.
 
@@ -481,7 +557,7 @@ python statusline.py --selftest     # internal checks, 0 dependencies
 python statusline.py --calibrate 92 84   # re-measure Fable's factor: <all%> <fable%>
 ```
 
-It prints how many checks ran: `OK - selftest (251 checks, 0 failure(s))`. The
+It prints how many checks ran: `OK - selftest (308 checks, 0 failure(s))`. The
 count is there because `0 failure(s)` alone would read exactly the same if the
 whole battery had been deleted. On Windows it reads one lower: the file-mode
 check only means something where POSIX permissions do.
