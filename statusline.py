@@ -127,7 +127,7 @@ EFFORT_COLORS = {
     "ultracode": "38;5;201",  # magenta
 }
 C_SEP_ITEM = "38;5;247"   # the "·", in the session name's color
-QUOTA_DASHES = "-------"  # the rule that opens and closes line 2 (in the "|" color)
+QUOTA_DASHES = "-"        # the rule that opens and closes line 2 (in the "|" color)
 C_NAME = "3;38;5;247"     # 3 = italic
 C_SESSION_TOKENS = "38;5;240"
 
@@ -728,6 +728,32 @@ def by_prefix(ident, table, default):
 def model_sgr(model_id: str | None) -> str:
     """Model color from the id's prefix; falls back to neutral gray."""
     return by_prefix(model_id, MODEL_COLORS, C_MODEL)
+
+
+# The context-window suffix the payload glues onto the name ("Opus 5 (1M
+# context)"). A SIZE has to be in there - a number, optionally with its unit -
+# so a future "(beta context)" or "(contextual preview)" is left alone. The
+# parenthesis is non-nested, and it only counts at the end of the name.
+_WINDOW_SUFFIX = re.compile(
+    r"\s*\(\s*\d+(?:\.\d+)?\s*[kmgt]?[^()]*\bcontext\b[^()]*\)\s*$", re.IGNORECASE
+)
+# Sanitizing budget before the suffix is cut. Generous on purpose: the cut has
+# to see the closing parenthesis, and the display limit is applied afterwards.
+_NAME_SCRATCH = 200
+
+
+def model_name(display_name) -> str:
+    """The model name for the terminal, without the context-window suffix.
+
+    Two lines is this bar's ceiling, and "Opus 5 (1M context)" spends 13 columns
+    repeating what the context field already says next to it.
+
+    Sanitize, then cut, then truncate - in that order. Truncating first would
+    both hide a real suffix behind the cut and let a name that merely CONTAINS
+    "(1M context)" mid-string end at one, turning legitimate text into a suffix
+    that gets eaten.
+    """
+    return safe_text(_WINDOW_SUFFIX.sub("", safe_text(display_name, _NAME_SCRATCH)), 60)
 
 
 def price_for(model: str | None) -> tuple[float, float]:
@@ -1727,7 +1753,7 @@ def render(data: dict) -> str:
     # session name: the model name and the effort level also arrive via the
     # payload.
     model_info = as_dict(data.get("model"))
-    model = safe_text(model_info.get("display_name"), 60)
+    model = model_name(model_info.get("display_name"))
     model_color = model_sgr(model_info.get("id"))
     effort = safe_text(as_dict(data.get("effort")).get("level"), 20)
     name = safe(session_name, data)
@@ -2847,6 +2873,37 @@ def _selftest_corpo() -> int:
     check("the bidi override leaves", safe_text("a‮b"), "ab")
     check("the bidi isolate leaves", safe_text("a⁦b"), "ab")
     check("an emoji is not a control character and stays", safe_text("ok ✓"), "ok ✓")
+    # Model name: the window suffix leaves, the rest of the name stays intact.
+    check("the 1M suffix leaves", model_name("Opus 5 (1M context)"), "Opus 5")
+    check("the 200k suffix leaves", model_name("Sonnet 5 (200k context)"), "Sonnet 5")
+    check("a name with no suffix goes through whole", model_name("Opus 5"), "Opus 5")
+    check("a parenthesis not about the window stays", model_name("Opus 5 (beta)"), "Opus 5 (beta)")
+    check("the suffix only leaves from the END", model_name("(1M context) Opus 5"), "(1M context) Opus 5")
+    check("a non-string model name becomes empty", model_name(7), "")
+    check("ESC does not get through the model name", "\x1b" in model_name("a\x1bb (1M context)"), False)
+    # With no SIZE in it, it is not a window suffix: these are plausible names
+    # that the earlier cut swallowed whole.
+    check("contextual is not context", model_name("Opus 5 (contextual beta)"),
+          "Opus 5 (contextual beta)")
+    check("context with no number stays", model_name("Opus 5 (beta context)"),
+          "Opus 5 (beta context)")
+    check("a sentence with context stays", model_name("Opus 5 (no context support)"),
+          "Opus 5 (no context support)")
+    check("a window with no unit leaves", model_name("Opus 5 (200000 context)"), "Opus 5")
+    check("a window ending in window leaves", model_name("Opus 5 (1M context window)"), "Opus 5")
+    # The three properties the regex promises that only a discriminating fixture
+    # proves: upper case, whole word, and a non-nested parenthesis.
+    check("upper case leaves too", model_name("Opus 5 (1M CONTEXT)"), "Opus 5")
+    check("contextual with a size stays", model_name("Opus 5 (1M contextual preview)"),
+          "Opus 5 (1M contextual preview)")
+    check("a nested parenthesis stays", model_name("Opus 5 (preview (1M context))"),
+          "Opus 5 (preview (1M context))")
+    # Sanitize, cut, truncate: a suffix landing on the display limit leaves
+    # whole instead of stranding half a parenthesis on the bar.
+    long_name = "M" * 55 + " (1M context)"
+    check("a suffix past the limit leaves whole", model_name(long_name), "M" * 55)
+    check("and the truncated name still respects the ceiling", len(model_name("N" * 300)), 60)
+
     # All THREE text fields of the payload go through the filter, not just the name.
     for field, payload in (
         ("session name", {"session_name": "x\x1b[31my"}),
@@ -3070,12 +3127,16 @@ def _selftest_corpo() -> int:
     )
     check("session and quotas on separate lines", two_lines.count("\n"), 1)
     check("the model on line 1", "Opus 4.8" in two_lines.split("\n")[0], True)
+    check("the window does not reach line 1", "1M context" in two_lines.split("\n")[0], False)
     check("the 5h quota on line 2", "15.0%" in two_lines.split("\n")[1], True)
     line2 = two_lines.split("\n")[1]
-    check("the rule opens line 2", line2.startswith(paint(QUOTA_DASHES, C_SEP_BLOCK) + " "), True)
-    check("the rule closes line 2", line2.endswith(" " + paint(QUOTA_DASHES, C_SEP_BLOCK)), True)
-    check("line 1 gains no rule", QUOTA_DASHES in two_lines.split("\n")[0], False)
-    check("with no quotas there is no loose rule", QUOTA_DASHES in render({}), False)
+    painted_rule = paint(QUOTA_DASHES, C_SEP_BLOCK)
+    check("the rule opens line 2", line2.startswith(painted_rule + " "), True)
+    check("the rule closes line 2", line2.endswith(" " + painted_rule), True)
+    # A single dash, not a ruler: the literal value is the contract.
+    check("the rule is a single dash", QUOTA_DASHES, "-")
+    check("line 1 gains no rule", painted_rule in two_lines.split("\n")[0], False)
+    check("with no quotas there is no loose rule", painted_rule in render({}), False)
 
     for line in failures:
         print(f"FAIL {line}")

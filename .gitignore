@@ -7,3 +7,13 @@ venv/
 # inside a clone of this repo.
 statusline-week-share.json
 statusline-payload.json
+
+# `docs/make-screenshots.py --html` writes these next to the PNGs; they are a
+# debugging aid, not part of the docs. Named one by one so a real HTML doc added
+# to `docs/` later is not silently ignored.
+docs/statusline.html
+docs/statusline-line1.html
+docs/statusline-line2.html
+
+# The half-written screenshot, before it is validated and moved into place.
+docs/*.pending.png

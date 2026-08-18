@@ -8,7 +8,7 @@ Leia em [português](README.pt-BR.md).
 
 ```
 <model> <effort> | <session(italic)> · <ctx%> <session-tokens>
-------- <5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset> -------
+- <5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset> -
 ```
 
 The top line is this session. The bottom line is your account quota. There is a
@@ -62,7 +62,7 @@ flags skip `site-packages` and the `PYTHON*` environment variables: it starts
 faster, and a dirty `PYTHONPATH` can't break it.
 
 3. Check it. `python statusline.py --selftest` prints
-   `OK - selftest (308 checks, 0 failure(s))`.
+   `OK - selftest (318 checks, 0 failure(s))`.
 
 ---
 
@@ -70,11 +70,11 @@ faster, and a dirty `PYTHONPATH` can't break it.
 
 **Line 1: the session**
 
-![Line 1: Opus 5 (1M context), medium, Tuning the status line, 11.0%, 2.9M](docs/statusline-line1.png)
+![Line 1: Opus 5, medium, Tuning the status line, 11.0%, 2.9M](docs/statusline-line1.png)
 
 | Field | What |
 | --- | --- |
-| `Opus 5 (1M context)` | the model, colored by tier: Fable orange and **bold**, Opus cyan, Sonnet yellow, Haiku blue |
+| `Opus 5` | the model, colored by tier: Fable orange and **bold**, Opus cyan, Sonnet yellow, Haiku blue. The context-window suffix the payload appends (`Opus 5 (1M context)`) is dropped: the context field beside it already says the window |
 | `medium` | reasoning effort (`low` up to `ultracode`) |
 | `Tuning the status line` | the session name, in italics: whatever you set with `/rename`, or the title Claude Code generated. The script strips control characters and truncates the text before it reaches your terminal |
 | `11.0%` | the share of the whole window already occupied, the `context`. From 75% up it turns red and a `/compact` hint shows up beside it |
@@ -557,7 +557,7 @@ python statusline.py --selftest     # internal checks, 0 dependencies
 python statusline.py --calibrate 92 84   # re-measure Fable's factor: <all%> <fable%>
 ```
 
-It prints how many checks ran: `OK - selftest (308 checks, 0 failure(s))`. The
+It prints how many checks ran: `OK - selftest (318 checks, 0 failure(s))`. The
 count is there because `0 failure(s)` alone would read exactly the same if the
 whole battery had been deleted. On Windows it reads one lower: the file-mode
 check only means something where POSIX permissions do.
@@ -577,6 +577,18 @@ print(subprocess.run(['python', 'statusline.py'], input=raw, capture_output=True
 ```
 
 That file only exists once you've enabled `CLAUDE_STATUSLINE_DEBUG=1`.
+
+The three pictures on this page are generated, not captured:
+
+```bash
+python docs/make-screenshots.py            # rewrites the three PNGs
+python docs/make-screenshots.py --selftest # checks the generator itself
+```
+
+It imports `statusline.py` and shoots whatever `render()` returns, so a change
+to a color, a separator or a field reaches the pictures on the next run. Only
+the quota numbers and the reset timers are pinned. It needs a Chromium-family
+browser in headless mode; point `CHROME` at one if it isn't found automatically.
 
 ---
 

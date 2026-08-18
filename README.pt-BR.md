@@ -8,7 +8,7 @@ Read this in [English](README.md).
 
 ```
 <modelo> <esforco> | <sessao(italico)> · <ctx%> <tokens-sessao>
-------- <5h%> · <reset-5h> | <fable-dia%> · <dia-total%> | <fable%> <semana%> <reset-semanal> -------
+- <5h%> · <reset-5h> | <fable-dia%> · <dia-total%> | <fable%> <semana%> <reset-semanal> -
 ```
 
 A linha de cima é esta sessão. A de baixo é a cota da conta. Tem uma terceira linha, com um espaço só, pra barra não encostar no prompt logo abaixo.
@@ -49,7 +49,7 @@ Ele conhece o formato do bloco e acha o `settings.json` sozinho. O pedido do dif
 
 No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pulam o `site-packages` e as variáveis de ambiente `PYTHON*`: inicia mais rápido, e um `PYTHONPATH` sujo não quebra ele.
 
-3. Confere: `python statusline.py --selftest` tem que imprimir `OK - selftest (308 checks, 0 failure(s))`.
+3. Confere: `python statusline.py --selftest` tem que imprimir `OK - selftest (318 checks, 0 failure(s))`.
 
 ---
 
@@ -57,11 +57,11 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 
 **Linha 1 - a sessão**
 
-![Linha 1: Opus 5 (1M context), medium, Tuning the status line, 11.0%, 2.9M](docs/statusline-line1.png)
+![Linha 1: Opus 5, medium, Tuning the status line, 11.0%, 2.9M](docs/statusline-line1.png)
 
 | Campo                    | O que é                                                                                                                                                                               |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Opus 5 (1M context)`    | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul)                                                                                       |
+| `Opus 5`                 | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul). O sufixo de janela que o payload cola no nome (`Opus 5 (1M context)`) sai: o campo de contexto ao lado já diz a janela |
 | `medium`                 | nível de reasoning effort (`low` … `ultracode`)                                                                                                                                       |
 | `Tuning the status line` | nome da sessão, em itálico - o que tu pôs no `/rename`, ou o título que o Claude Code gerou. O script tira os caracteres de controle e trunca o texto antes de ele chegar no terminal |
 | `11.0%`                  | **contexto** - % da janela inteira já ocupada. De 75% pra cima fica vermelho e o aviso `/compact` aparece do lado                                                                     |
@@ -309,7 +309,7 @@ python statusline.py --selftest     # checks internos, 0 dependências
 python statusline.py --calibrate 92 84   # re-mede o fator do Fable: <all%> <fable%>
 ```
 
-Ele imprime quantos checks rodaram: `OK - selftest (308 checks, 0 failure(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada. No Windows sai um a menos: o check de modo de arquivo só quer dizer alguma coisa onde existe permissão POSIX.
+Ele imprime quantos checks rodaram: `OK - selftest (318 checks, 0 failure(s))`. A contagem está ali porque um `0 falha(s)` sozinho sairia exatamente igual se a bateria inteira tivesse sido apagada. No Windows sai um a menos: o check de modo de arquivo só quer dizer alguma coisa onde existe permissão POSIX.
 
 Cobrem formatação de duração e de token, os termômetros, inferência da janela de contexto, a aritmética dos dois tetos (semana limpa, dia anterior estourado, véspera do reset, saldo zerado), decodificação do payload e a montagem das duas linhas. E mais, com arquivo temporário de verdade: o leitor reverso, a deduplicação de streaming, a janela de tempo, o custo ponderado e o cache em disco.
 
@@ -322,6 +322,19 @@ print(subprocess.run(['python', 'statusline.py'], input=raw, capture_output=True
 ```
 
 (Esse arquivo só existe depois que tu ligou o `CLAUDE_STATUSLINE_DEBUG=1`.)
+
+As três imagens desta página são geradas, não capturadas:
+
+```bash
+python docs/make-screenshots.py            # reescreve os três PNGs
+python docs/make-screenshots.py --selftest # testa o próprio gerador
+```
+
+Ele importa o `statusline.py` e fotografa o que o `render()` devolver, então
+mudança de cor, de separador ou de campo chega nas imagens na rodada seguinte.
+Só os números das cotas e os timers de reset ficam fixados. Precisa de um
+browser da família Chromium em modo headless; se ele não achar sozinho, aponta o
+`CHROME` pra um.
 
 ---
 
