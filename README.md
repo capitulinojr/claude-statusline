@@ -77,7 +77,7 @@ faster, and a dirty `PYTHONPATH` can't break it.
 | `Opus 5` | the model, colored by tier: Fable orange and **bold**, Opus cyan, Sonnet yellow, Haiku blue. The context-window suffix the payload appends (`Opus 5 (1M context)`) is dropped: the context field beside it already says the window |
 | `medium` | reasoning effort (`low` up to `ultracode`) |
 | `Tuning the status line` | the session name, in italics: whatever you set with `/rename`, or the title Claude Code generated. The script strips control characters and truncates the text before it reaches your terminal |
-| `11.0%` | the share of the whole window already occupied, the `context`. From 75% up it turns red and a `/compact` hint shows up beside it |
+| `11.0%` | the share of the whole window already occupied, the `context`. From 75% up it turns red and a `/clear` hint shows up beside it |
 | `2.9M` | tokens this session accumulated (input + output + cache) |
 
 **Line 2: the quotas**
@@ -89,9 +89,9 @@ faster, and a dirty `PYTHONPATH` can't break it.
 | `4.0%` | the `5-hour` window quota |
 | `4h 47m` | time left until the 5-hour reset |
 | `48.5%` | Fable's daily cap (see below) |
-| `21.0%` | the daily cap of the total quota, same rationing, all models |
+| **`21.0%`** | the daily cap of the total quota, same rationing, all models. **Bold**, like the weekly quota: the two readings of the quota you pay for whole |
 | `37.1%` | how much of the Fable cap (half the weekly quota) is gone |
-| `32.0%` | the `weekly` window quota |
+| **`32.0%`** | the `weekly` window quota, in **bold** |
 | `4d 14h` | time left until the weekly reset |
 
 The last two blocks each hold a Fable number and a total number, and both use the
@@ -127,18 +127,18 @@ through the cap with room to spare.
 Three deliberate exceptions:
 
 - `context` has no deadline, since it doesn't reset on its own. It stays on the
-  value thermometer (`SCALE_CTX`): red from 75% up, with the `/compact` hint
+  value thermometer (`SCALE_CTX`): red from 75% up, with the `/clear` hint
   beside it.
 - A real quota at or above `PACE_HARD` (95%) goes back to red regardless of
   pace. At that point the block arrives before the reset, and that is actionable
   even on the eve of it.
 - **The two Fable fields have a scale of their own** (`SCALE_FABLE`) and never
-  go gray, blue or green: muted orange throughout, vivid orange from a
-  projection of 85, red from 100. Fable is the expensive tier and its cap is
-  half the weekly quota, so the field is meant to be legible from the first
-  point spent - not to blend into the bar until it's late. That is why the
-  screenshot up top shows `37.1%` in red beside a `32.0%` in yellow: same week,
-  same deadline, different rulers.
+  go gray, blue or green: muted amber throughout, muted orange from a projection
+  of 85, dark red from 100. Fable is the expensive tier and its cap is half the
+  weekly quota, so the field is meant to be legible from the first point spent -
+  not to blend into the bar until it's late. The whole ramp runs one step BELOW
+  the total quotas: the vivid red (`38;5;196`) is reserved to them, and so is the
+  bold, so a Fable field never outshouts the quota that actually blocks.
 
 With no usable `resets_at` in the payload there is no deadline to measure
 against. The field falls back to the value scale, and the fields that depend on

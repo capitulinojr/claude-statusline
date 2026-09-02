@@ -64,7 +64,7 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 | `Opus 5`                 | modelo, colorido por tier (Fable laranja e **negrito**, Opus ciano, Sonnet amarelo, Haiku azul). O sufixo de janela que o payload cola no nome (`Opus 5 (1M context)`) sai: o campo de contexto ao lado já diz a janela |
 | `medium`                 | nível de reasoning effort (`low` … `ultracode`)                                                                                                                                       |
 | `Tuning the status line` | nome da sessão, em itálico - o que tu pôs no `/rename`, ou o título que o Claude Code gerou. O script tira os caracteres de controle e trunca o texto antes de ele chegar no terminal |
-| `11.0%`                  | **contexto** - % da janela inteira já ocupada. De 75% pra cima fica vermelho e o aviso `/compact` aparece do lado                                                                     |
+| `11.0%`                  | **contexto** - % da janela inteira já ocupada. De 75% pra cima fica vermelho e o aviso `/clear` aparece do lado                                                                     |
 | `2.9M`                   | tokens acumulados nesta sessão (input + output + cache)                                                                                                                               |
 
 **Linha 2 - as cotas**
@@ -76,9 +76,9 @@ No macOS/Linux, usa `python3 -S -E \"/path/statusline.py\"`. Os flags `-S -E` pu
 | `4.0%`   | cota da janela de **5 horas**                                        |
 | `4h 47m` | tempo até o reset das 5 horas                                        |
 | `48.5%`  | **teto diário do Fable** (ver abaixo)                                |
-| `21.0%`  | **teto diário da cota total** - mesmo racionamento, todos os modelos |
+| **`21.0%`**  | **teto diário da cota total** - mesmo racionamento, todos os modelos. Sai em **negrito**, como a semanal: são as duas leituras da cota que tu paga por inteiro |
 | `37.1%`  | quanto do teto do Fable (metade da cota semanal) já foi              |
-| `32.0%`  | cota da janela **semanal**                                           |
+| **`32.0%`**  | cota da janela **semanal**, em **negrito**                        |
 | `4d 14h` | tempo até o reset semanal                                            |
 
 Os dois últimos blocos têm um número do Fable e um do total cada, e os dois usam a **mesma ordem**: `Fable · total` no dia, `Fable total` na semana.
@@ -106,9 +106,9 @@ Termômetro (`SCALE_PACE`): cinza, azul, verde, amarelo, laranja, todos apagados
 
 Três exceções, de propósito:
 
-- **Contexto** fica no termômetro por valor (`SCALE_CTX`): vermelho de 75% pra cima, com o aviso `/compact` do lado.
+- **Contexto** fica no termômetro por valor (`SCALE_CTX`): vermelho de 75% pra cima, com o aviso `/clear` do lado.
 - **Cota real acima de `PACE_HARD` (95%)** volta pro vermelho, tenha o ritmo que tiver. Ali o bloqueio chega antes do reset, e isso é acionável até na véspera.
-- **Os dois campos do Fable têm escala própria** (`SCALE_FABLE`) e nunca ficam cinza, azul ou verde: laranja apagado o tempo todo, laranja vivo de uma projeção de 85, vermelho de 100. O Fable é o tier caro e o teto dele é metade da cota da semana, então o campo é feito pra ser legível desde o primeiro ponto gasto - não pra se diluir na barra até ser tarde. É por isso que o print lá em cima mostra `37.1%` em vermelho ao lado de um `32.0%` amarelo: mesma semana, mesmo prazo, réguas diferentes.
+- **Os dois campos do Fable têm escala própria** (`SCALE_FABLE`) e nunca ficam cinza, azul ou verde: âmbar apagado o tempo todo, laranja apagado de uma projeção de 85, vermelho escuro de 100. O Fable é o tier caro e o teto dele é metade da cota da semana, então o campo é feito pra ser legível desde o primeiro ponto gasto - não pra se diluir na barra até ser tarde. A rampa inteira corre um degrau ABAIXO das cotas totais: o vermelho vivo (`38;5;196`) é reservado a elas, e o negrito também, então um campo do Fable nunca grita mais alto que a cota que de fato bloqueia.
 
 Sem um `resets_at` usável no payload não existe prazo pra medir contra. O campo cai pra escala por valor, e os campos que dependem de "quantos dias faltam" somem da barra em vez de virarem chute.
 

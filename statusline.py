@@ -4,10 +4,14 @@
 Reads the status line JSON from stdin and prints TWO ANSI lines. Layout:
 
     <model> <effort> | <session(italic)> · <ctx%> <session-tokens>
-    <5h%> · <5h-reset> | <fable-day%> · <day-total%> | <fable%> <week%> <weekly-reset>
+    <5h%> · <5h-reset> | <fable-day%> · <**day-total%**> | <fable%> <**week%**> <weekly-reset>
 
 Line 1 = what belongs to this session (model, effort, name, context, tokens);
-line 2 = the account quotas (the 5-hour window and the weekly one).
+line 2 = the account quotas (the 5-hour window and the weekly one); the two
+fields marked with ** come out in BOLD - they are the readings of the quota you
+pay for whole, and the bold separates each one from the Fable field beside it.
+It is not "what blocks": what blocks is the 5-hour window and the weekly one,
+and the day's cap is rationing (`hard=None`).
 
 No labels. Every percentage that has a DEADLINE (5h, day, week) is painted by
 PACE, not by value: the color comes from the consumption PROJECTED to the reset
@@ -16,8 +20,9 @@ projects to ~86 and comes out yellow; the same 80% on day 2 projects past 250 an
 comes out red. SCALE_PACE's palette: gray -> blue -> green -> yellow -> muted
 orange, vivid red only when the pace projects blowing through the cap with room
 to spare. Context has no deadline and stays on the value thermometer (SCALE_CTX).
-Fable has a scale of its own (SCALE_FABLE): always orange, red when it projects
-overrunning its own cap. Only the Fable model is bold.
+Fable has a scale of its own (SCALE_FABLE): muted amber always, muted orange on
+reaching the cap, dark red on overrunning it - the bottom layer of line 2. Bold:
+only the two TOTAL quotas, the weekly one and the day's.
 
 Fable's cap is Anthropic's official limit - half the weekly quota on Max/Team
 Premium; past that Fable only keeps going on usage credits. What the script
@@ -134,6 +139,27 @@ C_SESSION_TOKENS = "38;5;240"
 C_RESET_5H = "38;5;241"
 C_RESET_WEEK = "38;5;239"
 
+# Vivid red, RESERVED - inside line 2 - to the layer of the TOTAL quotas: the 5h
+# one, the weekly one and the day's cap. It has a name because the reservation is
+# a rule, not a coincidence of literals: repainting Fable with it undoes the bar's
+# hierarchy (see the SCALE_FABLE block). The scope is LINE 2, not the file - the
+# `max` effort label and the context alert belong to line 1, compete with no
+# quota field for the eye, and keep the same 196.
+VIVID_RED = "38;5;196"
+
+# THE HOT END OF THE QUOTAS THAT BLOCK: 184 (#d7d700) -> 178 (#d7af00) ->
+# 196 (#ff0000). Fable runs underneath, on its own muted ramp (137 -> 173 -> 124).
+# The two triples read as two LAYERS, not as a single scale. On the first two
+# steps what separates the layers is SATURATION (totals with the blue channel at
+# 00, Fable at 5f, washed out); on the red step both have blue 00 and what
+# separates them is INTENSITY - #ff0000 against #af0000. No color repeats between
+# the layers: there is an invariant in the selftest covering that.
+#
+# The orange ALWAYS moves together with the yellow, out of necessity rather than
+# taste: left at 173 while the yellow rose, going from "on pace" to "running hot"
+# DARKENED the field - a gradient running backwards right at the point of raising
+# the alarm. Whoever touches one, touches the other.
+
 # Thermometer by VALUE: (exclusive upper bound, SGR). Used only as a fallback,
 # when the payload carries no `resets_at` for the window and there is therefore
 # no deadline to measure pace against.
@@ -141,10 +167,10 @@ SCALE = (
     (20.0, "38;5;240"),  # dark gray
     (40.0, "38;5;67"),   # muted blue
     (60.0, "38;5;71"),   # muted green
-    (75.0, "38;5;143"),  # muted yellow
-    (88.0, "38;5;173"),  # muted orange
+    (75.0, "38;5;184"),  # yellow (#d7d700)
+    (88.0, "38;5;178"),  # orange (#d7af00)
 )
-SCALE_ALERT = "38;5;196"  # >= 88%: vivid red
+SCALE_ALERT = VIVID_RED  # >= 88%: vivid red
 
 # Thermometer by PACE - the default scale for everything that has a deadline. The
 # number fed in here is NOT the consumption, it is the consumption PROJECTED to
@@ -157,10 +183,10 @@ SCALE_PACE = (
     (45.0, "38;5;240"),   # gray   - less than half the pace
     (65.0, "38;5;67"),    # blue   - plenty of slack
     (82.0, "38;5;71"),    # green  - below pace
-    (108.0, "38;5;143"),  # yellow - on pace (lands right on the cap)
-    (135.0, "38;5;173"),  # orange - running hot
+    (108.0, "38;5;184"),  # yellow - on pace (lands right on the cap)
+    (135.0, "38;5;178"),  # orange - running hot
 )
-SCALE_PACE_ALERT = "38;5;196"  # projects blowing through the cap with room to spare
+SCALE_PACE_ALERT = VIVID_RED  # projects blowing through the cap with room to spare
 
 # Floor for the pace denominator. Extrapolating linearly from a tiny sliver of
 # the deadline is noise (2% spent over 1% of the time would project 200%), so
@@ -180,20 +206,36 @@ PACE_HARD = 95.0
 # reset the payload still carries the old value for a few seconds.
 RESET_TOLERANCE = 300.0
 
+# THE VIVID RED (`38;5;196`) IS RESERVED TO THE LAYER OF THE TOTAL QUOTAS: the 5h
+# one, the weekly one and the day's cap - the same list as the `VIVID_RED` block
+# above. The cut is NOT "blocks vs does not block" (the day's cap sits in the hot
+# layer and blocks nothing, `hard=None`); it is the whole quota against the slice
+# of ONE model. Fable overrunning stops nothing - the expensive tier leaves what
+# is included and starts eating usage credits, which is expensive and is not a
+# stop. While Fable used the same 196, the field that does NOT block was the
+# loudest on the bar and stole the eye from the one that does, even with the
+# totals in bold. Fable's whole palette went down one step to sit below the
+# bold+196 pair.
+#
 # Fable's cap: the expensive tier never goes cold - the bottom of the scale is
-# already muted orange, as a permanent warning. Above pace the orange lights up,
-# and red only when the projection reaches the whole cap (the point where Fable
-# leaves what is included and starts eating usage credits). Three bands on
-# purpose: a single orange from 0 to 99.9 is not a gradient, and the warning
-# would arrive together with the overrun.
+# already muted amber, as a permanent warning. Above pace the amber lights up into
+# orange, and the MUTED red only when the projection reaches the whole cap. Three
+# bands on purpose: a single color from 0 to 99.9 is not a gradient, and the
+# warning would arrive together with the overrun.
 SCALE_FABLE = (
-    (85.0, "38;5;173"),  # muted orange - the expensive tier's permanent warning
-    (100.0, "38;5;214"),  # vivid orange - projects touching the cap
+    (85.0, "38;5;137"),  # muted amber - the expensive tier's permanent warning
+    (100.0, "38;5;173"),  # muted orange - projects touching the cap
 )
-SCALE_FABLE_ALERT = "38;5;196"
+SCALE_FABLE_ALERT = "38;5;124"  # DARK red (#af0000) - pure red, without the gray
+# that washed out 131. It is the LEAST luminous field of the layer: 0.091 against
+# 0.326 of the orange right below it (2.24:1 contrast on a #1e1e1e background).
+# The drop in light on the alert step is not a new defect - red is dark by nature
+# and the old palette fell the same way (214 -> 196, from ~0.55 to 0.213).
+# Whoever wants to brighten this goes up to 160 (#d70000, 3.09:1) without leaving
+# pure red.
 # Fable's fallback (payload with no usable deadline): back to value, with the 80%
 # cut the bar used before pacing existed.
-SCALE_FABLE_VALUE = ((80.0, "38;5;173"),)
+SCALE_FABLE_VALUE = ((80.0, "38;5;137"),)
 
 FIVE_HOURS = 5 * 3600
 SEVEN_DAYS = 7 * 86400
@@ -362,10 +404,12 @@ DEBUG_DUMP = "statusline-payload.json"
 
 # Context's own thermometer: % of the WHOLE window (the payload's official
 # used_percentage when present), not of an artificial 80% "usable window".
-# Cold < 50%, amber 50-75%, red >= 75% + a /compact reminder.
+# Cold < 50%, amber 50-75%, red >= 75% + a /clear reminder.
+# The hint is /clear, never /compact: the bar is built for running a session
+# to the end and starting fresh, not for compacting it.
 SCALE_CTX = ((50.0, "38;5;240"), (75.0, "38;5;143"))
 SCALE_CTX_ALERT = "38;5;196"
-CTX_HINT = "/compact"
+CTX_HINT = "/clear"
 
 # USD per 1M tokens (input, output) - official API docs, checked 2026-07-22.
 # Matched by the model id's prefix; the first match wins, so the order matters.
@@ -403,7 +447,38 @@ class Window(NamedTuple):
 
 
 def paint(text: str, sgr: str) -> str:
-    return f"\x1b[{sgr}m{text}\x1b[0m" if text else ""
+    """Paints `text` and closes with a reset.
+
+    Bold goes out as a sequence of ITS OWN, before the color:
+    `\x1b[1m\x1b[38;5;67m`. `\x1b[1;38;5;67m` is the same ANSI, but the renderer
+    that draws the status line rewrites the SGR it passes through and loses the
+    `1` glued to the parameters of a 256-color - the field comes out colored and
+    thin. Two chained sequences depend on nobody recognizing the composed form.
+
+    LIMIT: only bold in PREFIX is split out. Writing bold as a suffix
+    (`38;5;240;1`) hands back the composed form and the renderer eats it again.
+    """
+    if not text:
+        return ""
+    if sgr.startswith("1;"):
+        sgr = "1m\x1b[" + sgr[2:]
+    return f"\x1b[{sgr}m{text}\x1b[0m"
+
+
+def bold(sgr: str) -> str:
+    """The same SGR in bold - 1 is a PREFIX, it does not change the color.
+
+    It goes on both fields of the TOTAL quotas: the weekly one and the day's.
+    Those are the readings of the quota you pay for whole - the weekly one is
+    what actually blocks, and the day's one is its rationing (that one blocks
+    nothing, `hard=None`). Fable's fields stay unbolded, informative beside them.
+    The bold is what separates the two layers without spending more room on the
+    bar.
+
+    Hands back the canonical form `1;<color>`; splitting the `1` into a sequence
+    of its own at emission time is `paint`'s job, in one place.
+    """
+    return f"1;{sgr}"
 
 
 def write_private(path: Path, text: str) -> None:
@@ -689,9 +764,10 @@ def pace_sgr(
 
 def fable_sgr(percent: float, fraction: float | None,
               floor: float = PACE_FLOOR_WINDOW) -> str:
-    """Color of the expensive model's two fields: always orange, red when the
-    pace projects occupying the whole cap. With no deadline, back to the cut by
-    value.
+    """Color of the expensive model's two fields: muted amber always, muted
+    orange on reaching the cap and dark red on overrunning it. With no deadline,
+    back to the cut by value. The whole palette runs BELOW the layer of the total
+    quotas.
 
     It exists so the configuration lives in one place only: written out in full
     at every call site, the selftest ended up REPEATING the config instead of
@@ -1765,12 +1841,13 @@ def render(data: dict) -> str:
         value = safe(elapsed_fraction, data, window)
         return value if isinstance(value, float) else None
 
-    def pct(window: str) -> str:
+    def pct(window: str, strong: bool = False) -> str:
         """Real quota (5h / week): color by pace against its own reset."""
         value = safe(usage_percent, data, window)
         if not isinstance(value, float):
             return ""
-        return paint(f"{value:.1f}%", pace_sgr(value, fraction(window)))
+        sgr = pace_sgr(value, fraction(window))
+        return paint(f"{value:.1f}%", bold(sgr) if strong else sgr)
 
     ctx = safe(context_percent, data)
     if isinstance(ctx, float):
@@ -1780,7 +1857,7 @@ def render(data: dict) -> str:
     else:
         ctx_txt = ""
     pct_5h_txt = pct("five_hour")
-    pct_week_txt = pct("seven_day")
+    pct_week_txt = pct("seven_day", strong=True)
     # Deadline of both daily caps: the calendar day, clipped by the week on the
     # reset day (see `day_elapsed_fraction`).
     window = safe(weekly_window, data)
@@ -1808,7 +1885,8 @@ def render(data: dict) -> str:
     # not a block.
     day_total = safe(daily_total_percent, data)
     pct_day_total_txt = (
-        paint(f"{day_total:.1f}%", pace_sgr(day_total, day_frac, floor=PACE_FLOOR_DAY, hard=None))
+        paint(f"{day_total:.1f}%",
+              bold(pace_sgr(day_total, day_frac, floor=PACE_FLOOR_DAY, hard=None)))
         if isinstance(day_total, float)
         else ""
     )
@@ -1950,10 +2028,14 @@ def _selftest_corpo() -> int:
     check("ctx scale amber", scale_sgr(50, SCALE_CTX, SCALE_CTX_ALERT), "38;5;143")
     check("ctx scale alert", scale_sgr(75, SCALE_CTX, SCALE_CTX_ALERT), SCALE_CTX_ALERT)
     check(
-        "/compact hint in the red",
+        "the session hint in the red",
         CTX_HINT in render({"context_window": {"used_percentage": 80.0}}),
         True,
     )
+    # The hint is /clear by design, not by accident: the check above passes with
+    # any text, so without this line the bar could go back to saying /compact
+    # with no test complaining.
+    check("the hint never suggests compacting", "compact" in CTX_HINT, False)
     check(
         "no hint below the alert",
         CTX_HINT in render({"context_window": {"used_percentage": 60.0}}),
@@ -1967,11 +2049,136 @@ def _selftest_corpo() -> int:
     check("low effort cyan", EFFORT_COLORS["low"], "38;5;37")
     check("xhigh effort orange", EFFORT_COLORS["xhigh"], "38;5;214")
     check("max effort red", EFFORT_COLORS["max"], "38;5;196")
-    check("fable scale orange at the floor", scale_sgr(84, SCALE_FABLE, SCALE_FABLE_ALERT), "38;5;173")
+    check("fable scale amber at the floor", scale_sgr(84, SCALE_FABLE, SCALE_FABLE_ALERT), "38;5;137")
     check("fable scale lights up before the cap",
-          scale_sgr(99, SCALE_FABLE, SCALE_FABLE_ALERT), "38;5;214")
+          scale_sgr(99, SCALE_FABLE, SCALE_FABLE_ALERT), "38;5;173")
     check("fable scale alert", scale_sgr(100, SCALE_FABLE, SCALE_FABLE_ALERT), SCALE_FABLE_ALERT)
-    check("fable scale never goes cold", scale_sgr(0, SCALE_FABLE, SCALE_FABLE_ALERT), "38;5;173")
+    # The LITERALS of the triple, not just the constants' names: compared against
+    # themselves, `124 -> 125` and the fallback's cold `137 -> 136` came out green
+    # and the contract 137 -> 173 -> 124 was not pinned down.
+    check("fable's triple is 137 -> 173 -> 124",
+          [scale_sgr(v, SCALE_FABLE, SCALE_FABLE_ALERT) for v in (0, 90, 100)],
+          ["38;5;137", "38;5;173", "38;5;124"])
+    check("the cold of fable's fallback is 137",
+          scale_sgr(50, SCALE_FABLE_VALUE, SCALE_FABLE_ALERT), "38;5;137")
+    check("fable scale never goes cold", scale_sgr(0, SCALE_FABLE, SCALE_FABLE_ALERT), "38;5;137")
+    # The RULE, not the literals: the vivid red belongs to the quotas that block.
+    # Written as an invariant so it survives the next change of tone - repainting
+    # Fable with 196 steals the eye from the totals again and lands here.
+    fable_colors = (
+        [sgr for _, sgr in SCALE_FABLE]
+        + [sgr for _, sgr in SCALE_FABLE_VALUE]
+        + [SCALE_FABLE_ALERT]
+    )
+    check("no fable color uses the totals' vivid red",
+          any(VIVID_RED in sgr for sgr in fable_colors), False)
+    check("the total quotas keep the vivid red",
+          (SCALE_ALERT, SCALE_PACE_ALERT), (VIVID_RED, VIVID_RED))
+    # The LITERAL, not just the name: without this, `VIVID_RED = "38;5;197"` passed
+    # every check - the constant agreed with itself.
+    check("the vivid red is 196", VIVID_RED, "38;5;196")
+    # The two layers cannot share ANY color: a color repeated between them erases
+    # the "this blocks / this does not" reading exactly where it matters. Catches
+    # the general case, not just the red.
+    # The WHOLE of line 2, not just the quota scales: the mutant
+    # `SCALE_FABLE_ALERT = "38;5;239"` collided exactly with `C_RESET_WEEK`, in the
+    # same block of the bar, and passed every check.
+    quota_colors = [sgr for _, sgr in SCALE_PACE] + [sgr for _, sgr in SCALE] + [
+        SCALE_ALERT, SCALE_PACE_ALERT]
+    chrome_colors = [C_RESET_5H, C_RESET_WEEK, C_SEP_ITEM, C_SEP_BLOCK]
+    line2_colors = quota_colors + chrome_colors
+    # Compares the COLOR, not the whole SGR string: `SCALE_FABLE_VALUE = "1;38;5;184"`
+    # is the same color 184 as the total layer (with an undue bold thrown in) and
+    # did not cross with "38;5;184" in a literal comparison.
+    def color_only(sgr):
+        found = re.search(r"38;5;\d+", sgr)
+        return found.group(0) if found else sgr
+
+    def sgr_attributes(params):
+        """The attributes of one SGR sequence, with 38/48 consumed WHOLE.
+
+        `38;5;1` is color 1, not "color + bold". Reading parameter by parameter
+        would flag bold on any color of index 1, and the invariant would start
+        lying towards the safe side, which is the worst side.
+        """
+        fields = params.split(";")
+        mode_width = {"5": 3, "2": 5}  # `38;5;n` and `38;2;r;g;b`
+        i = 0
+        while i < len(fields):
+            current = fields[i] or "0"  # `\x1b[m` and `\x1b[;m` mean `\x1b[0m`
+            if current in ("38", "48"):
+                step = mode_width.get(fields[i + 1] if i + 1 < len(fields) else "")
+                # Fails CLOSED: an unknown mode (`38;1;237`) or a truncated form
+                # (`38;5`) goes back to being read parameter by parameter.
+                # Swallowing the whole sequence would hide a bold `1` inside it.
+                if step is not None and i + step <= len(fields):
+                    i += step
+                    continue
+            yield current
+            i += 1
+
+    # The bold reader is the only thing holding up the invariant of WHO comes out
+    # bold - so it checks itself, case by case, before being used.
+    for params, expected in (
+        ("1;38;5;67", ["1"]),        # bold in prefix
+        ("38;5;67;1", ["1"]),        # bold in suffix
+        ("38;5;1", []),              # color of INDEX 1, not bold
+        ("48;2;1;1;1", []),          # RGB with components of 1, not bold
+        ("38;1;237", ["38", "1", "237"]),  # unknown mode: read parameter by parameter
+        ("38;5", ["38", "5"]),       # truncated form: same
+        ("38;2;1", ["38", "2", "1"]),      # truncated RGB: same
+        ("", ["0"]),                 # `\x1b[m` is the reset
+        (";", ["0", "0"]),
+        ("22", ["22"]),
+    ):
+        check(f"attributes of SGR {params!r}", list(sgr_attributes(params)), expected)
+
+    def bold_fields(line):
+        """The texts painted with SGR 1 on the line, reading the PARAMETERS.
+
+        A reading with STATE: bold goes out as a sequence of its own (`\x1b[1m`)
+        and holds until the reset, so looking only at the sequence glued to the
+        text does not see the `1` that came before. `1` also does not have to come
+        first: `38;5;240;1` turns bold on just the same, and checking the prefix
+        `"\x1b[1;"` let both alternative forms through - including bold hidden in
+        a chrome color. The question here is semantic: WHO is bold on this line,
+        period.
+        """
+        bold_on = False
+        out = []
+        for params, text in re.findall(r"\x1b\[([0-9;]*)m([^\x1b]*)", line):
+            for attribute in sgr_attributes(params):
+                if attribute in ("0", "22"):
+                    bold_on = False
+                elif attribute == "1":
+                    bold_on = True
+            if text and bold_on:
+                out.append(text)
+        return out
+    check("no fable color collides with another color on line 2",
+          sorted({color_only(c) for c in fable_colors}
+                 & {color_only(c) for c in line2_colors}), [])
+    # And the line's chrome (reset, separator) cannot repeat a color from EITHER
+    # quota layer: `C_RESET_5H = "38;5;240"` made the cold 5h equal to the reset
+    # right beside it and passed green - the invariant only looked at Fable x rest.
+    check("line 2's chrome does not repeat a quota color",
+          sorted({color_only(c) for c in chrome_colors}
+                 & {color_only(c) for c in list(quota_colors) + list(fable_colors)}), [])
+    # Order of BAND, not of luminance: a worsening pace has to run yellow ->
+    # orange -> red, in that order. It deliberately does NOT measure brightness -
+    # 184=0.630 / 178=0.451 / 196=0.213 looks like a regression, but every
+    # yellow-orange-red ramp darkens like that (the old 143/173/196 did too: 0.42
+    # -> 0.326 -> 0.213). What carries the alarm here is the HUE; the floor that
+    # matters is contrast, and all three clear it easily on a #1e1e1e background
+    # (>= 4.17:1).
+    check("the hot end of the pace ramp runs yellow-orange-red",
+          [pace_sgr(v, 0.5) for v in (50.0, 60.0, 90.0)],  # proj 100 / 120 / 180
+          ["38;5;184", "38;5;178", SCALE_PACE_ALERT])
+    # The check above only exercised SCALE_PACE. With it alone, inverting the
+    # yellow of the by-value fallback (SCALE) passed green.
+    check("the hot end of the by-value fallback runs in the same order",
+          [pace_sgr(v, None) for v in (70.0, 80.0, 90.0)],
+          ["38;5;184", "38;5;178", SCALE_ALERT])
     check(
         "the fable fallback keeps the cut at 80",
         scale_sgr(80, SCALE_FABLE_VALUE, SCALE_FABLE_ALERT),
@@ -1987,20 +2194,20 @@ def _selftest_corpo() -> int:
     check("the floor holds the extrapolation at the start", pace_percent(3.0, 0.01, 0.15), 20.0)
 
     # The case that motivated pacing: 80% of the week near the reset is NOT an alert.
-    check("80% on day 7 comes out yellow", pace_sgr(80.0, 6.2 / 7), "38;5;143")  # proj ~90
+    check("80% on day 7 comes out yellow", pace_sgr(80.0, 6.2 / 7), "38;5;184")  # proj ~90
     check("the same 80% on day 2 is red", pace_sgr(80.0, 1.5 / 7), SCALE_PACE_ALERT)
-    check("88% on the eve of the reset stays yellow", pace_sgr(88.0, 6.5 / 7), "38;5;143")
-    check("at exact pace the middle of the week is yellow", pace_sgr(50.0, 0.5), "38;5;143")
+    check("88% on the eve of the reset stays yellow", pace_sgr(88.0, 6.5 / 7), "38;5;184")
+    check("at exact pace the middle of the week is yellow", pace_sgr(50.0, 0.5), "38;5;184")
     check("half the pace is blue", pace_sgr(25.0, 0.5), "38;5;67")
     check("a fifth of the pace is gray", pace_sgr(10.0, 0.5), "38;5;240")
     check("50% over a quarter of the deadline is red", pace_sgr(50.0, 0.25), SCALE_PACE_ALERT)
     check("a nearly exhausted quota is red even at the end", pace_sgr(96.0, 1.0), SCALE_PACE_ALERT)
-    check("without hard the same reading does not alert", pace_sgr(96.0, 1.0, hard=None), "38;5;143")
-    check("with no deadline it falls back to the value scale", pace_sgr(85.0, None), "38;5;173")
+    check("without hard the same reading does not alert", pace_sgr(96.0, 1.0, hard=None), "38;5;184")
+    check("with no deadline it falls back to the value scale", pace_sgr(85.0, None), "38;5;178")
     check("with no deadline the old alert still holds", pace_sgr(90.0, None), SCALE_ALERT)
     # Through `fable_sgr`, not repeating the config: a test that re-declares what
     # it tests stays green after the config changes in the render.
-    check("fable below pace is muted orange", fable_sgr(40.0, 0.5), "38;5;173")
+    check("fable below pace is muted amber", fable_sgr(40.0, 0.5), "38;5;137")
     check("fable projecting an overrun is red", fable_sgr(60.0, 0.5), SCALE_FABLE_ALERT)
     check("fable with no deadline goes back to the value cut", fable_sgr(85.0, None), SCALE_FABLE_ALERT)
 
@@ -3020,28 +3227,55 @@ def _selftest_corpo() -> int:
 
         # Render: both daily caps, in order and with each scale's colors.
         patch_shares(0.50, 0.50, 0.25)
-        day_line = render(
-            {
-                "rate_limits": {
-                    "five_hour": {"used_percentage": 15.0},
-                    "seven_day": {
-                        "used_percentage": 40.0,
-                        "resets_at": day_start() + 5 * 86400,
-                    },
+        # A FIXED share of the day, not the hour the battery happens to run at.
+        # With the real hour the check was hostage to the clock: at 19:34 the
+        # projection of 71.4 gave 87.5, which falls in the SAME band as the raw
+        # value 71.4, and swapping `pace_sgr` for `scale_sgr` in the render passed
+        # green. At 0.40 the two readings diverge - projection 178.5 (red) against
+        # 71.4 (yellow).
+        day_frac = 0.40
+        real_day_frac = globals()["day_elapsed_fraction"]
+        try:
+            globals()["day_elapsed_fraction"] = lambda *a, **k: day_frac
+            day_line = render(
+                {
+                    "rate_limits": {
+                        # WITH `resets_at`: without it, the only test of "the 5h is
+                        # not bold" ran on a payload with no deadline, and
+                        # `strong=fraction(window) is not None` passed green.
+                        "five_hour": {"used_percentage": 15.0,
+                                      "resets_at": time.time() + 3600},
+                        "seven_day": {
+                            "used_percentage": 40.0,
+                            "resets_at": day_start() + 5 * 86400,
+                        },
+                    }
                 }
-            }
-        ).split("\n")[-1]  # payload with no model: only the quota line comes out
-        # Both daily caps are painted by pace against the end of the calendar day
-        # - the expectation comes from the same functions so it does not depend
-        # on the test's hour.
-        day_frac = day_elapsed_fraction()
+            ).split("\n")[-1]  # payload with no model: only the quota line comes out
+        finally:
+            globals()["day_elapsed_fraction"] = real_day_frac
         fable_day_txt = paint("200.0%", fable_sgr(200.0, day_frac, PACE_FLOOR_DAY))
-        total_day_txt = paint("71.4%", pace_sgr(71.4, day_frac, floor=PACE_FLOOR_DAY, hard=None))
+        # The expectation does NOT go through `bold`: built with it, swapping the
+        # helper for a literal (`return "1;38;5;137"`) kept the totals bold but
+        # wiped their color, and the battery passed green.
+        total_day_color = pace_sgr(71.4, day_frac, floor=PACE_FLOOR_DAY, hard=None)
+        total_day_txt = paint("71.4%", "1;" + total_day_color)
+        check("bold is a PREFIX, it does not change the color",
+              bold(total_day_color), "1;" + total_day_color)
+        # WHO is bold on this line - a closed list, not "contains". Kills in one
+        # go the bold leaking into the 5h, into Fable or into the chrome, in any
+        # serialization of SGR 1.
+        check("on line 2 only the two TOTAL quotas come out bold",
+              bold_fields(day_line), ["71.4%", "40.0%"])
         check("fable's cap on line 2", fable_day_txt in day_line, True)
         check("the day's total cap on line 2", total_day_txt in day_line, True)
+        # `find`, not `index`: with one of the two fields missing - which is what
+        # happens on every color or bold mutant - `index` TAKES DOWN the battery
+        # with a ValueError in the middle of the report instead of reporting the
+        # failure and moving on.
         check(
             "the day's total cap sits to the RIGHT of fable's",
-            day_line.index(fable_day_txt) < day_line.index(total_day_txt),
+            0 <= day_line.find(fable_day_txt) < day_line.find(total_day_txt),
             True,
         )
         check(
@@ -3049,11 +3283,26 @@ def _selftest_corpo() -> int:
             f"{fable_day_txt}  {paint('·', C_SEP_ITEM)}  {total_day_txt}" in day_line,
             True,
         )
+        # It used to be `scale_sgr(71.4) == scale_sgr(71.4, SCALE, SCALE_ALERT)`,
+        # which compared the function with itself on its own defaults and could
+        # not fail. What needs to be true is that the TWO readings diverge on this
+        # fixture - only then does the presence check above tell which of them the
+        # day's field uses.
         check(
-            "the day's total cap uses the weekly total's scale",
-            scale_sgr(71.4) == scale_sgr(71.4, SCALE, SCALE_ALERT),
+            "on the day, pace and raw value are DIFFERENT readings",
+            total_day_color != scale_sgr(71.4),
             True,
         )
+        # The bold is what separates the TOTAL quota from Fable's beside it. Both
+        # sides of the pair get checked: demanding the bold on the total alone
+        # would let through a bold applied to both, which separates nothing.
+        # The EMITTED form, not the canonical one: the `1` goes in a sequence of
+        # its own before the color, and checking `"\x1b[1;"` would pass green on
+        # exactly the composed form the renderer eats.
+        check("the day's total cap comes out bold",
+              total_day_txt.startswith("\x1b[1m\x1b["), True)
+        check("fable's daily cap does NOT come out bold",
+              "\x1b[1m" in fable_day_txt, False)
         # Without fable's cap, the day total stays alone in the block, no loose "·".
         only_total = render(
             {
@@ -3074,21 +3323,29 @@ def _selftest_corpo() -> int:
         # with either order. Here 0.25 x 40 = 10 points out of 50 -> 20.0% of
         # Fable's cap, against the 40.0% of the total quota.
         patch_shares(0.25, 0.0, 0.0)
-        week_line = render(
-            {
-                "rate_limits": {
-                    "seven_day": {
-                        "used_percentage": 40.0,
-                        "resets_at": day_start() + 5 * 86400,
-                    }
+        week_payload = {
+            "rate_limits": {
+                "seven_day": {
+                    "used_percentage": 40.0,
+                    "resets_at": day_start() + 5 * 86400,
                 }
             }
-        ).split("\n")[-1]
+        }
+        week_line = render(week_payload).split("\n")[-1]
         check("fable's weekly cap on line 2", "20.0%" in week_line, True)
         check("the weekly total quota on line 2", "40.0%" in week_line, True)
+        # The same pair as the day block: total in bold, Fable beside it unbolded.
+        week_frac = elapsed_fraction(week_payload, "seven_day")
+        check("the weekly total quota comes out bold",
+              paint("40.0%", "1;" + pace_sgr(40.0, week_frac)) in week_line, True)
+        check("fable's weekly cap does NOT come out bold",
+              paint("20.0%", fable_sgr(20.0, week_frac)) in week_line, True)
+        # `find`, not `index`, for the same reason as the day block: with one of
+        # the fields missing, `index` takes the battery down with a ValueError in
+        # the middle of the report.
         check(
             "the weekly total sits to the RIGHT of fable's cap",
-            week_line.index("20.0%") < week_line.index("40.0%"),
+            0 <= week_line.find("20.0%") < week_line.find("40.0%"),
             True,
         )
     finally:
@@ -3129,6 +3386,23 @@ def _selftest_corpo() -> int:
     check("the model on line 1", "Opus 4.8" in two_lines.split("\n")[0], True)
     check("the window does not reach line 1", "1M context" in two_lines.split("\n")[0], False)
     check("the 5h quota on line 2", "15.0%" in two_lines.split("\n")[1], True)
+    # The 5h is NOT bold: the bold is the pair of TOTAL quotas (weekly and day).
+    # Without this check, swapping `pct("five_hour")` for `pct("five_hour",
+    # strong=True)` passed green - only the text was being checked.
+    check("the 5h quota does NOT come out bold",
+          paint("15.0%", "1;" + scale_sgr(15.0)) in two_lines.split("\n")[1], False)
+    # This payload carries no `resets_at` at all - it is the FALLBACK path.
+    # Without checking it, `strong=fraction(window) is not None` removed the bold
+    # from the weekly total right here and the battery did not see it.
+    check("with no deadline the weekly total STAYS bold",
+          bold_fields(two_lines.split("\n")[1]), ["35.0%"])
+    # And the fallback's color comes from the TOTALS layer, not Fable's: swapping
+    # `pct`'s `fallback=`/`fallback_alert=` for Fable's palette painted the 5h and
+    # the weekly one with 137 without breaking anything.
+    check("with no deadline the weekly total uses the totals' scale",
+          paint("35.0%", "1;" + scale_sgr(35.0)) in two_lines.split("\n")[1], True)
+    check("with no deadline the 5h uses the totals' scale",
+          paint("15.0%", scale_sgr(15.0)) in two_lines.split("\n")[1], True)
     line2 = two_lines.split("\n")[1]
     painted_rule = paint(QUOTA_DASHES, C_SEP_BLOCK)
     check("the rule opens line 2", line2.startswith(painted_rule + " "), True)
